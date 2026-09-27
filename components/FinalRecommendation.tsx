@@ -132,8 +132,8 @@ function SourceBadge({ loading, aiReady }: { loading: boolean; aiReady: boolean 
         : aiReady
         ? "bg-emerald-100 text-emerald-800"
         : "bg-blue-100 text-blue-800"
-    }`} title={loading ? "The current recommendation remains available while optional AI review runs" : aiReady ? "Reviewed and polished by the AI write-up" : "Complete recommendation from Pathfinder's rules engine"}>
-      {loading ? "Optional AI review pending" : aiReady ? "AI-reviewed" : "Standard view"}
+    }`} title={loading ? "The current draft remains available while AI review runs" : aiReady ? "AI-authored report accepted after separate AI review" : "Rules-based draft; no accepted AI report for this revision"}>
+      {loading ? "AI report pending" : aiReady ? "AI-reviewed" : "Rules-based draft"}
     </span>
   );
 }
@@ -1091,7 +1091,7 @@ export function FinalRecommendation({
               {optionalAiLoading ? (
                 <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white">{aoaiEnabled === null ? "Checking AI availability" : "Optional AI review running"}</span>
               ) : tieBreakError || refineError ? (
-                <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white" title="The optional AI update did not finish. Your existing recommendation remains available.">{tieBreakResult ? "Current result retained" : "Standard view"}</span>
+                <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white" title="The AI update did not finish. The last report or a clearly labeled rules-based draft remains available.">{tieBreakResult ? "Current result retained" : "Rules-based draft"}</span>
               ) : tieBreakResult ? (
                 <span className="rounded-full bg-emerald-200/20 px-2.5 py-0.5 text-xs font-medium text-emerald-50">AI-refined</span>
               ) : null}
