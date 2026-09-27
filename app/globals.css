@@ -1,0 +1,324 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background: #F5F8FC;
+  color: #1B2638;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+.card {
+  @apply bg-white border border-ms-border rounded-lg shadow-card p-4;
+}
+
+/* Shared brand surface — one source of truth for the hero (landing) and the
+   recommendation header (architecture page), so the product feels cohesive. */
+.brand-hero {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0B5CAD 0%, #0A4C8F 52%, #13243B 100%);
+  color: #ffffff;
+}
+.brand-hero::before,
+.brand-hero::after {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  pointer-events: none;
+}
+.brand-hero::before {
+  top: -6rem;
+  right: -5rem;
+  height: 18rem;
+  width: 18rem;
+  background: rgba(255, 255, 255, 0.12);
+}
+.brand-hero::after {
+  bottom: -8rem;
+  left: -4rem;
+  height: 18rem;
+  width: 18rem;
+  background: rgba(60, 193, 255, 0.14);
+}
+.brand-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.layout-shell-wide {
+  width: min(calc(100% - 2rem), 104rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.layout-shell-final {
+  width: min(calc(100% - 2rem), 108rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.layout-shell-narrow {
+  width: 100%;
+  max-width: 56rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.landing-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(20rem, 24rem);
+}
+
+.recommendation-top-grid {
+  display: grid;
+  gap: 0.875rem;
+  grid-template-columns: minmax(0, 1.05fr) minmax(20rem, 0.95fr);
+  align-items: start;
+}
+
+.recommendation-command-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .recommendation-top-grid,
+  .recommendation-command-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .landing-hero-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.btn-compact {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-semibold transition;
+}
+.btn-primary {
+  @apply btn bg-ms-blue text-white hover:bg-ms-blueDark disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.btn-ghost {
+  @apply btn bg-transparent text-ms-text hover:bg-gray-100;
+}
+.btn-outline {
+  @apply btn border border-ms-border bg-white text-ms-text hover:bg-gray-50;
+}
+
+.cta-ping-marker {
+  position: absolute;
+  right: 1rem;
+  top: -0.45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid #BBD6F2;
+  background: #FFFFFF;
+  color: #005A9E;
+  box-shadow: 0 12px 28px rgba(0, 90, 158, 0.22);
+  padding: 0.25rem 0.55rem 0.25rem 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.cta-ping-dot {
+  position: relative;
+  display: inline-flex;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: #0078D4;
+}
+
+.cta-ping-dot::after {
+  content: "";
+  position: absolute;
+  inset: -0.38rem;
+  border-radius: inherit;
+  border: 2px solid rgba(0, 120, 212, 0.35);
+  animation: cta-ping 1.9s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes cta-ping {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.8;
+  }
+  78%, 100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta-ping-dot::after {
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+/* ===== Landing CTA emphasis (animated glow + button pulse) ===== */
+.cta-spotlight {
+  animation: cta-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.cta-spotlight::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 0.75rem;
+  background: linear-gradient(120deg, rgba(0, 120, 212, 0.55), rgba(120, 200, 255, 0.25), rgba(0, 120, 212, 0.55));
+  background-size: 200% 200%;
+  filter: blur(7px);
+  opacity: 0.75;
+  z-index: -1;
+  animation: cta-glow 3.4s ease-in-out infinite;
+}
+
+.cta-pulse-btn {
+  position: relative;
+  overflow: hidden;
+}
+.cta-pulse-btn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -60%;
+  height: 100%;
+  width: 45%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: skewX(-18deg);
+  animation: cta-shimmer 3.4s ease-in-out infinite;
+}
+
+@keyframes cta-rise {
+  0% { transform: translateY(8px) scale(0.98); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes cta-glow {
+  0%, 100% { background-position: 0% 50%; opacity: 0.55; }
+  50% { background-position: 100% 50%; opacity: 0.9; }
+}
+@keyframes cta-shimmer {
+  0%, 100% { left: -60%; }
+  55%, 70% { left: 120%; }
+}
+
+/* Extra-catchy primary CTA: gentle breathing + pulsing accent glow halo. */
+.cta-pop {
+  animation: cta-attention 2.6s ease-in-out infinite;
+}
+@keyframes cta-attention {
+  0%, 100% {
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.25), 0 0 0 0 rgba(60, 193, 255, 0);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28), 0 0 26px 5px rgba(60, 193, 255, 0.6);
+    transform: scale(1.03);
+  }
+}
+
+/* ===== Guided walkthrough (coachmarks) ===== */
+.coach-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(15, 28, 46, 0.55);
+  backdrop-filter: blur(1px);
+  animation: coach-fade 0.25s ease both;
+}
+.coach-catcher {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: transparent;
+}
+.coach-spotlight {
+  position: fixed;
+  z-index: 61;
+  border-radius: 0.85rem;
+  box-shadow: 0 0 0 9999px rgba(15, 28, 46, 0.62), 0 0 0 3px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  transition: top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease;
+  animation: coach-spot 1.8s ease-in-out infinite;
+}
+.coach-tip {
+  position: fixed;
+  z-index: 62;
+  width: min(20rem, calc(100vw - 2rem));
+  border-radius: 0.7rem;
+  border: 1px solid #BBD6F2;
+  background: #FFFFFF;
+  color: #201F1E;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.28);
+  padding: 0.9rem 1rem;
+  animation: coach-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes coach-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes coach-pop {
+  0% { transform: translateY(6px) scale(0.97); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes coach-spot {
+  0%, 100% { box-shadow: 0 0 0 9999px rgba(15, 28, 46, 0.62), 0 0 0 3px rgba(255, 255, 255, 0.9); }
+  50% { box-shadow: 0 0 0 9999px rgba(15, 28, 46, 0.62), 0 0 0 6px rgba(255, 255, 255, 0.5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cta-spotlight,
+  .cta-spotlight::before,
+  .cta-pulse-btn::after,
+  .cta-pop,
+  .coach-spotlight,
+  .coach-backdrop,
+  .coach-tip {
+    animation: none;
+  }
+  .cta-spotlight::before { opacity: 0.5; }
+  .coach-spotlight { transition: none; }
+}
+
+.badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+}
+.badge-blue { @apply badge bg-blue-50 text-ms-blue; }
+.badge-green { @apply badge bg-green-50 text-green-700; }
+.badge-amber { @apply badge bg-amber-50 text-amber-700; }
+.badge-red   { @apply badge bg-red-50 text-red-700; }
+.badge-gray  { @apply badge bg-gray-100 text-gray-700; }
+
+/* semantic aliases used throughout components */
+.badge-info    { @apply badge-blue; }
+.badge-success { @apply badge-green; }
+.badge-warn    { @apply badge-amber; }
+.badge-danger  { @apply badge-red; }
+.badge-muted   { @apply badge-gray; }
+
+.choice {
+  @apply text-left w-full rounded-md border border-ms-border bg-white px-3.5 py-2.5 text-sm hover:border-ms-blue hover:bg-blue-50/40 transition;
+}
+.choice-selected {
+  @apply border-ms-blue bg-blue-50 ring-1 ring-ms-blue;
+}
+.choice-active {
+  @apply choice-selected;
+}

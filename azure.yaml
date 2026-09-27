@@ -1,0 +1,21 @@
+name: aiarchitectpathfinder
+infra:
+  provider: bicep
+  path: infra
+  module: main
+services:
+  web:
+    project: .
+    language: js
+    host: appservice
+    dist: .deploy/source
+    hooks:
+      prepackage:
+        shell: pwsh
+        run: node scripts/deploy-external-package.mjs
+        interactive: false
+hooks:
+  preprovision:
+    shell: pwsh
+    run: ./scripts/deploy-external-preflight.ps1
+    interactive: false

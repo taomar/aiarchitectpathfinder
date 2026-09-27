@@ -1,0 +1,66 @@
+{
+  "name": "ai-platform-decision-navigator",
+  "version": "7.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test:decisions": "tsx scripts/decision-regression-check.ts",
+    "test:v7": "tsx scripts/v7-ai-regression-check.ts",
+    "smoke:v7": "tsx scripts/v7-ai-smoke.ts",
+    "test:golden": "tsx scripts/golden-scenario-proof.ts",
+    "test:golden:offline": "tsx scripts/golden-scenario-proof.ts --offline",
+    "test:review": "tsx scripts/review-regression-check.ts",
+    "test:ui": "tsx scripts/ui-regression-check.tsx",
+    "test:api-authority": "node scripts/api-authority-regression-check.cjs",
+    "test:runtime-api": "node scripts/runtime-api-regression-check.cjs",
+    "test:ai-refinement": "tsx scripts/v7-ai-regression-check.ts",
+    "test:outputs": "tsx scripts/output-regression-check.ts",
+    "test:instrumentation": "node scripts/instrumentation-regression-check.cjs",
+    "test:env": "node scripts/env-regression-check.cjs",
+    "smoke:apim": "npx --yes tsx scripts/smoke-apim.ts",
+    "deploy": "pwsh -NoProfile -File scripts/deploy-external.ps1",
+    "deploy:validate": "pwsh -NoProfile -File scripts/deploy-external.ps1 -ValidateOnly",
+    "auth:setup": "node scripts/deploy-external-password.mjs",
+    "test:auth": "tsx scripts/deploy-external-auth-check.ts",
+    "test:external-ai": "tsx scripts/deploy-external-ai-check.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.9.3",
+    "@azure/identity": "^4.13.1",
+    "@azure/monitor-opentelemetry": "^1.18.1",
+    "class-variance-authority": "0.7.0",
+    "clsx": "2.1.1",
+    "geoip-lite": "^2.0.2",
+    "lucide-react": "0.441.0",
+    "mermaid": "^11.15.0",
+    "next": "^16.2.9",
+    "pptxgenjs": "^4.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwind-merge": "2.5.2",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.16.5",
+    "@types/react": "18.3.5",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.20",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.9",
+    "postcss": "8.5.15",
+    "tailwindcss": "3.4.11",
+    "typescript": "5.6.2",
+    "tsx": "4.23.13",
+    "jszip": "3.10.1"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
+  }
+}

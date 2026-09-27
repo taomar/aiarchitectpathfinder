@@ -1,0 +1,17 @@
+using './main.bicep'
+
+param environmentName = readEnvironmentVariable('AZURE_ENV_NAME')
+param location = readEnvironmentVariable('AZURE_LOCATION')
+param webAppName = readEnvironmentVariable('AZURE_WEB_APP_NAME')
+param createAppServicePlan = bool(readEnvironmentVariable('CREATE_APP_SERVICE_PLAN', 'true'))
+param appServicePlanName = readEnvironmentVariable('AZURE_APP_SERVICE_PLAN_NAME', '${readEnvironmentVariable('AZURE_WEB_APP_NAME')}-plan')
+param existingAppServicePlanResourceId = readEnvironmentVariable('EXISTING_APP_SERVICE_PLAN_ID', '')
+param authMode = readEnvironmentVariable('AUTH_MODE')
+param passwordHash = readEnvironmentVariable('AUTH_PASSWORD_HASH', '')
+param sessionSecret = readEnvironmentVariable('AUTH_SESSION_SECRET', '')
+param entraTenantId = readEnvironmentVariable('AUTH_ENTRA_TENANT_ID', '')
+param entraClientId = readEnvironmentVariable('AUTH_ENTRA_CLIENT_ID', '')
+param entraClientSecret = readEnvironmentVariable('AUTH_ENTRA_CLIENT_SECRET', '')
+param adminEmails = readEnvironmentVariable('ADMIN_EMAILS', '')
+param workloadIdentityResourceId = readEnvironmentVariable('WORKLOAD_IDENTITY_RESOURCE_ID', '')
+param aiSettings = json(readEnvironmentVariable('APP_AI_SETTINGS'))
