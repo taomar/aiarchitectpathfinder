@@ -41,13 +41,13 @@ export function RecommendationProgressPanel({
   const complete = stage === "complete";
   const reviewOperation = operation === "review";
   const steps = reviewOperation ? [
-    { title: "AI architecture", detail: "Current proposal, unchanged", icon: FileText, active: false, done: true },
+    { title: "AI recommendation", detail: "Current proposal, unchanged", icon: FileText, active: false, done: true },
     { title: "AI Review", detail: complete ? "Review finished" : "Independent quality judgment", icon: ShieldCheck, active: handingOff || reviewing, done: complete },
     { title: "Findings", detail: complete ? "Ready alongside the proposal" : "No automatic rewriting", icon: Check, active: false, done: complete }
   ] : [
     { title: "Use case", detail: previousAiResult ? "Prior AI result + your update" : "Your input + preliminary draft", icon: FileText, active: stage === "preparing", done: stage !== "preparing" },
-    { title: "Sol · Max reasoning", detail: architectActive ? revising ? "Correcting output format" : "Authoring the architecture" : complete ? "Proposal ready" : "Waiting for input", icon: Bot, active: architectActive, done: complete },
-    { title: "Your architecture", detail: complete ? "Ready · AI review is optional" : "No mandatory review wait", icon: Check, active: false, done: complete }
+    { title: "Sol · Max reasoning", detail: architectActive ? revising ? "Correcting output format" : "Writing the recommendation" : complete ? "Recommendation ready" : "Waiting for input", icon: Bot, active: architectActive, done: complete },
+    { title: "Your recommendation", detail: complete ? "Ready · diagram builds separately" : "Architecture image follows in the background", icon: Check, active: false, done: complete }
   ];
   return (
     <section ref={panel} data-ai-stage={stage} data-motion-paused={paused || hidden || offscreen}
@@ -55,10 +55,10 @@ export function RecommendationProgressPanel({
       aria-label="AI recommendation progress">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-ms-text">{reviewOperation ? "Running optional AI review" : revising ? "Refining the AI architecture" : "Preparing your AI architecture"}</h2>
+          <h2 className="text-lg font-semibold text-ms-text">{reviewOperation ? "Running optional AI review" : revising ? "Updating your AI recommendation" : "Preparing your AI recommendation"}</h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600">
-            {reviewOperation ? "Your architecture stays available. Review findings are advisory and will not automatically rewrite or discard it." : previousAiResult ? "The previous AI result stays visible while Sol generates the update. Independent review is optional." :
-              "The dimmed page is a preliminary rules-based preview, not the final recommendation. The AI can replace its architecture."}
+            {reviewOperation ? "Keep reading while the optional review runs. Findings will not automatically rewrite or discard the recommendation." : previousAiResult ? "Keep reading the current recommendation while Sol prepares the update." :
+              "You can read and browse the preliminary rules-based preview below. It is not the final AI recommendation. The architecture image will be built separately afterward."}
           </p>
         </div>
         <span className="rounded-full bg-[#EFF6FC] px-3 py-1 text-xs font-medium text-ms-blue" aria-label={`${elapsed} seconds elapsed`}>

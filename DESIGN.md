@@ -16,8 +16,10 @@ Overview with its summary and services/checks sidebar, numbered architecture
 narrative, and existing Architecture, Governance and Technical arrangements.
 The service-sizing table is an addition to Technical, not a new page layout.
 
-Initial generation shows the same layout with a dimmed, inert preliminary
-rules-based preview. Server-driven Sol maximum generation and format-repair
+Initial generation shows a readable, browsable preliminary rules-based preview
+with a clear non-final label. Never dim the page, disable reading tabs, block text
+selection or make the recommendation container inert during any AI request.
+Server-driven Sol maximum recommendation generation and format-repair
 stages provide real progress; elapsed time is not a claimed percentage.
 Independent review is an optional button, with its own handoff/review progress.
 Reduced motion, manual pause and offscreen/hidden suspension apply.

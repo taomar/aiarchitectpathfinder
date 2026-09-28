@@ -349,14 +349,6 @@ html, body {
   background: #0F6CBD;
   animation: recommendation-transfer 1.4s ease-in-out infinite;
 }
-.recommendation-preview-dim {
-  opacity: 0.28;
-  pointer-events: none;
-  user-select: none;
-}
-.recommendation-result-reveal {
-  animation: recommendation-result-reveal 240ms ease-out both;
-}
 [data-motion-paused="true"] .recommendation-generation-symbol,
 [data-motion-paused="true"] .recommendation-stage-activity > span,
 [data-motion-paused="true"] .recommendation-transfer-dot {
@@ -376,15 +368,10 @@ html, body {
   35%, 70% { opacity: 1; }
   100% { transform: translateX(38px); opacity: 0; }
 }
-@keyframes recommendation-result-reveal {
-  from { opacity: 0.4; }
-  to { opacity: 1; }
-}
 @media (prefers-reduced-motion: reduce) {
   .recommendation-generation-symbol,
   .recommendation-stage-activity > span,
-  .recommendation-transfer-dot,
-  .recommendation-result-reveal {
+  .recommendation-transfer-dot {
     animation: none !important;
   }
   .recommendation-stage-activity > span { width: 100%; opacity: 0.65; }

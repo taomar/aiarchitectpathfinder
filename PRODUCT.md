@@ -38,8 +38,9 @@ recommendation. Use a clean integrated stacked framework before routing its
 connections; failed or stale image jobs must not discard or overwrite the text.
 
 CONFIRMED: Preserve the original Recommendation page layout. During initial
-generation, a dimmed and inert preliminary draft may be shown, explicitly marked
-as non-final. Server events identify generation or explicitly requested review.
+generation, a fully readable preliminary draft may be shown, explicitly marked
+as non-final. Reading, selection, scrolling and tabs stay available throughout
+generation and background diagram work. Server events identify generation or explicitly requested review.
 A structurally valid AI artifact replaces the preview without mandatory review.
 Review findings remain alongside the unchanged architecture; applying them
 requires a separate user action. Export review labels must reflect actual state.

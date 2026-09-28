@@ -131,7 +131,6 @@ export function RecommendationPageLayout(props: Props) {
   const summary = report?.proposedArchitectureSummary ?? decision?.finalRecommendation ?? "";
   const useCaseSummary = report?.useCaseSummary ?? input.summary ?? "";
   const generating = busy && props.operation === "generate";
-  const dimClass = generating ? "recommendation-preview-dim" : "";
   const coachSteps = useMemo<CoachStep[]>(() => [
     { selector: '[data-coach="rec-result"]', title: "Your recommended platform", body: "This is the AI-generated architecture for your use case. Independent review is optional.", onBeforeShow: () => props.onTab("overview") },
     { selector: '[data-coach="rec-tabs"]', title: "Explore the full plan", body: "The tabs show different views of the same AI-generated recommendation." },
@@ -140,7 +139,7 @@ export function RecommendationPageLayout(props: Props) {
     { selector: '[data-coach="rec-export"]', title: "Export to share", body: "Download the concise PowerPoint, including Dev/Test/Prod sizing.", onBeforeShow: () => props.onTab("overview") }
   ], [props.onTab]);
   const badge = <SourceBadge preliminary={preliminary} busy={busy} report={report} />;
-  return <div className="space-y-5 pb-10" data-recommendation-layout="classic">
+  return <div className="space-y-5 pb-10" data-recommendation-layout="classic" data-loading-behavior="readable">
     <details className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 shadow-sm">
       <summary className="cursor-pointer font-semibold">Disclaimer and validation note</summary>
       <p className="mt-1 leading-relaxed">This is a <em>suggested architecture</em> that requires review and validation before implementation. Validate architecture standards, data residency, security, pricing, sizing and service availability.</p>
@@ -174,7 +173,7 @@ export function RecommendationPageLayout(props: Props) {
           <button className="btn-compact border border-white/30 bg-transparent text-white hover:bg-white/10" onClick={props.onReset}>Start over</button>
         </div>
       </div>
-      <div className={`mt-4 ${dimClass}`} data-coach="rec-result" data-preliminary-header={preliminary || undefined}>
+      <div className="mt-4" data-coach="rec-result" data-preliminary-header={preliminary || undefined}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/75">
@@ -221,12 +220,11 @@ export function RecommendationPageLayout(props: Props) {
     </section>}
     {!decision && <div className="card rounded-xl"><UserInputSummary input={input} refinement={appliedNotes} /></div>}
 
-    {decision && <div data-preliminary-preview={preliminary || undefined} aria-disabled={preliminary || undefined} aria-busy={busy}
-      ref={element => { if (element) element.inert = generating; }}
-      className={`${dimClass} ${!busy ? "recommendation-result-reveal" : ""} space-y-5`}>
+    {decision && <div data-recommendation-content="true" data-preliminary-preview={preliminary || undefined}
+      className="space-y-5">
       <nav className="rounded-2xl border border-ms-border bg-white p-1.5 shadow-card" aria-label="Recommendation sections" data-coach="rec-tabs">
         <div className="grid gap-1 md:grid-cols-4">
-          {tabs.map(tab => <button key={tab.id} type="button" disabled={generating} aria-current={activeTab === tab.id ? "page" : undefined}
+          {tabs.map(tab => <button key={tab.id} type="button" aria-current={activeTab === tab.id ? "page" : undefined}
             className={`rounded-lg px-3 py-2 text-left transition ${activeTab === tab.id ? "bg-[#EFF6FC] text-ms-blue ring-1 ring-[#BBD6F2]" : "text-gray-600 hover:bg-gray-50 hover:text-ms-text"}`} onClick={() => props.onTab(tab.id)}>
             <span className="block text-sm font-semibold">{tab.label}</span>
             <span className="mt-0.5 block text-[11px] leading-snug text-gray-500">{tab.description}</span>
@@ -293,7 +291,9 @@ export function RecommendationPageLayout(props: Props) {
 
       {activeTab === "architecture" && <>
         <section className="card rounded-xl"><div className="flex flex-wrap items-center justify-between gap-3" data-coach="rec-architecture">
-          <div><h2 className="text-base font-semibold">Layered reference architecture</h2><p className="mt-0.5 text-xs text-gray-500">A clean stacked framework with matching service icons and the needed connections. The background image build does not change the recommendation.</p></div>
+          <div><h2 className="text-base font-semibold">Layered reference architecture</h2><p className="mt-0.5 text-xs text-gray-500">{preliminary
+            ? "The AI recommendation is still being written. Its separate background diagram build will start afterward."
+            : "A clean stacked framework with matching service icons and the needed connections. The background image build does not change the recommendation."}</p></div>
           {report?.architecture && <button type="button" className="btn-primary" onClick={props.onDiagram} disabled={busy || props.architectureState.phase === "building"}>Rebuild architecture image</button>}
         </div>
           <div className="mt-3">{report?.architecture
@@ -303,7 +303,7 @@ export function RecommendationPageLayout(props: Props) {
               <div className="mt-4 space-y-3" aria-hidden="true">{[1, 2, 3].map(index => <div key={index} className="h-16 rounded border border-[#BBD6F2] bg-white" />)}</div>
             </div>}</div>
         </section>
-        <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">High-level solution flow</h2><p className="mt-0.5 text-sm text-gray-500">The short main journey authored by the AI. Detailed implementation steps remain below.</p></div><span className="badge badge-muted">AI-authored</span></div>
+        <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">High-level solution flow</h2><p className="mt-0.5 text-sm text-gray-500">{preliminary ? "The AI-authored flow will appear after the recommendation is ready." : "The short main journey authored by the AI. Detailed implementation steps remain below."}</p></div><span className="badge badge-muted">{report?.architecture ? "AI-authored" : "Preparing"}</span></div>
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">{report?.architecture ? <MermaidDiagram code={report.architecture.mermaid} /> : <p className="text-xs text-gray-600">The high-level flow will appear when the background architecture build finishes.</p>}</div>
         </section>
         <section className="grid gap-3 xl:grid-cols-2">
@@ -340,7 +340,7 @@ export function RecommendationPageLayout(props: Props) {
       </>}
 
       {activeTab === "technical" && <>
-        <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold">Architecture details</h2>{badge}</div><p className="mt-0.5 text-xs text-gray-500">AI-authored layers and component responsibilities.</p><div className="mt-3"><ArchitectureLayerTable layers={decision.architectureLayers} /></div></section>
+        <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold">Architecture details</h2>{badge}</div><p className="mt-0.5 text-xs text-gray-500">{preliminary ? "Preliminary intake layers; the AI may correct or replace them." : "AI-authored layers and component responsibilities."}</p><div className="mt-3"><ArchitectureLayerTable layers={decision.architectureLayers} /></div></section>
         {report?.architecture && <section className="card rounded-xl"><details>
           <summary className="cursor-pointer text-base font-semibold">Detailed controls and boundary conditions</summary>
           <p className="mt-2 text-xs text-gray-500">These AI-authored details are kept out of the high-level diagrams.</p>

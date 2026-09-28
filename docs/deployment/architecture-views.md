@@ -17,8 +17,10 @@ the deterministic draft are not a reason for code to reject it.
 
 Code checks output format and graph references, then renders the approved graph.
 It does not add, remove, or re-evaluate architecture choices when generating a
-diagram. During generation the original page layout shows a dimmed, inert
-preliminary draft and live generation progress. Text is available before the
+diagram. During generation the original page layout shows a readable preliminary
+draft and live generation progress. It remains labelled non-final until the AI
+recommendation arrives. Tabs, scrolling and text selection are never page-blocked.
+Text is available before the
 background architecture finishes; full PowerPoint export becomes available with
 the visual artifact, without waiting for review. Optional review shows its
 own progress, then attaches its findings without replacing the architecture.

@@ -35,6 +35,27 @@ test("recommendation renders first while automatic architecture builds independe
   await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Architecture build notification" })).toContainText("Recommendation ready");
   await expect(page.getByRole("textbox", { name: "Refine the recommendation", exact: true })).toBeEnabled();
+  const content = page.locator('[data-recommendation-content="true"]');
+  await expect(content).toHaveCSS("opacity", "1");
+  await expect(content).toHaveCSS("pointer-events", "auto");
+  expect(await content.evaluate(element => (element as HTMLElement).inert)).toBe(false);
+  const paragraph = content.getByText(initial.proposedArchitectureSummary.split("\n\n")[0], { exact: true });
+  await paragraph.scrollIntoViewIfNeeded();
+  const selection = await paragraph.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selected = window.getSelection();
+    selected?.removeAllRanges();
+    selected?.addRange(range);
+    return { text: selected?.toString(), selectionStyle: getComputedStyle(element).userSelect };
+  });
+  expect(selection.text).toBe(initial.proposedArchitectureSummary.split("\n\n")[0]);
+  expect(selection.selectionStyle).not.toBe("none");
+  await page.getByRole("button", { name: /^Technical\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Services and Dev / Test / Prod sizing", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Governance\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Assumptions to confirm", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Overview\b/ }).click();
   await expect(page.getByRole("button", { name: "AI Review (optional)", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Export as PowerPoint", exact: true })).toBeDisabled();
   await page.screenshot({ path: path.join(caseDirectory(info), "text-before-diagram.png"), fullPage: true });

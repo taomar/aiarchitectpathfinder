@@ -62,15 +62,21 @@ async function loadExample(page: Page) {
   await expect.poll(() => page.evaluate(() => (Reflect.get(window, "__recommendationStreamTest") as StreamHarness).requests.length)).toBe(1);
 }
 
-test("the original layout shows an inert preview and only server events advance AI progress", async ({ page }, info) => {
+test("the original layout remains readable during generation and only server events advance progress", async ({ page }, info) => {
   await login(page);
   await installStream(page);
   await page.clock.install();
   await loadExample(page);
   const preview = page.locator('[data-preliminary-preview="true"]');
   await expect(preview).toBeVisible();
-  expect(await preview.evaluate(element => (element as HTMLElement).inert)).toBe(true);
-  await expect(preview).toHaveCSS("opacity", "0.28");
+  expect(await preview.evaluate(element => (element as HTMLElement).inert)).toBe(false);
+  await expect(preview).toHaveCSS("opacity", "1");
+  await expect(preview).toHaveCSS("pointer-events", "auto");
+  await expect(page.locator('[data-coach="rec-result"]')).toHaveCSS("opacity", "1");
+  await page.getByRole("button", { name: /^Governance\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Assumptions to confirm", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Overview\b/ }).click();
+  await expect(page.getByRole("heading", { name: "Recommendation summary", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Export as PowerPoint", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Back to wizard", exact: true })).toBeEnabled();
   await stage(page, "architect");

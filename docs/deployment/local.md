@@ -122,7 +122,9 @@ single-call operation with a 90-second limit and ten seconds of delivery grace.
 Navigating away cancels the active request.
 
 The original Recommendation layout stays in place. During initial generation a
-dimmed, non-interactive rules-based preview is explicitly marked preliminary.
+readable rules-based preview is explicitly marked preliminary. There is no
+page-wide dimming, interaction overlay or disabled reading tabs. Scrolling and
+text selection remain available during generation and architecture/image loading.
 Generation and optional-review stages come from real server events; the elapsed
 timer is not a completion percentage. Review is never shown as running unless
 the user requested it. Motion can be

@@ -50,14 +50,14 @@ const recommendationMarkup = renderToStaticMarkup(
     onReset={() => {}}
   />
 );
-assert.match(recommendationMarkup, /Preparing your AI architecture/);
+assert.match(recommendationMarkup, /Preparing your AI recommendation/);
 assert.match(recommendationMarkup, /data-preliminary-preview="true"/);
-assert.match(recommendationMarkup, /recommendation-preview-dim/);
-assert.match(recommendationMarkup, /preliminary rules-based preview, not the final recommendation/);
+assert.doesNotMatch(recommendationMarkup, /recommendation-preview-dim|\binert\b|aria-disabled="true"/);
+assert.match(recommendationMarkup, /read and browse the preliminary rules-based preview/);
 assert.match(recommendationMarkup, /data-recommendation-layout="classic"/);
 assert.match(recommendationMarkup, /xl:grid-cols-\[minmax\(0,1.25fr\)_minmax\(22rem,0.75fr\)\]/);
 assert.doesNotMatch(recommendationMarkup, /deterministic rules retain|AI-generated/);
-assert.ok(recommendationMarkup.includes(decide(input).finalRecommendation), "Only an explicitly dimmed preliminary preview is allowed while AI is running.");
+assert.ok(recommendationMarkup.includes(decide(input).finalRecommendation), "The preliminary preview stays readable without claiming it is the final AI result.");
 const exportButton = [...recommendationMarkup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
   .find((match) => match[2].includes("Export as PowerPoint"));
 assert.ok(exportButton);
