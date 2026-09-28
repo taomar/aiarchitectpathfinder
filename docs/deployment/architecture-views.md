@@ -1,8 +1,14 @@
 # Architecture views and PowerPoint
 
-The recommendation page, SVG and PowerPoint use the AI-authored high-level
-component integration graph. Mermaid draws a separate short journey authored
-by the same AI, rather than repeating the full integration/control map.
+The recommendation appears first. A separate automatic background request builds
+its architecture, flow and SVG image from that exact recommendation. A notification
+reports building, ready or failed; image failures have an independent retry and
+never remove the recommendation. PowerPoint is enabled when its visual artifact
+is ready. Newer recommendations cancel and reject stale image results.
+
+The SVG and PowerPoint use the AI-authored high-level component graph. Mermaid
+uses an explicit short flow graph, including decision branches rather than a
+forced sequence that puts abstention after a successful answer.
 The AI receives the user scenario and an
 advisory deterministic draft, then chooses the architecture using Sol at maximum
 supported reasoning (`xhigh`). A separate AI judge evaluates the proposal only
@@ -12,8 +18,9 @@ the deterministic draft are not a reason for code to reject it.
 Code checks output format and graph references, then renders the approved graph.
 It does not add, remove, or re-evaluate architecture choices when generating a
 diagram. During generation the original page layout shows a dimmed, inert
-preliminary draft and live generation progress. After generation, the architecture
-and exports are available without waiting for review. Optional review shows its
+preliminary draft and live generation progress. Text is available before the
+background architecture finishes; full PowerPoint export becomes available with
+the visual artifact, without waiting for review. Optional review shows its
 own progress, then attaches its findings without replacing the architecture.
 The user may choose **Apply review feedback** to generate a new revision.
 An initial generation error removes the preliminary preview rather than
@@ -31,22 +38,20 @@ operations and network dependencies.
 The high-level view follows [Microsoft's architecture diagram guidance](https://learn.microsoft.com/en-us/azure/well-architected/architect-role/design-diagrams):
 official service icons, directional arrows, labeled relationships, explicit
 logical boundaries, and a line-style legend. The reference layout stacks equal-width
-horizontal workload layers top to bottom. Identity/governance sits in a separate
-cross-cutting rail. It does not invent a VNet, subnet, or private endpoint to make
+horizontal layers top to bottom, with a consistent label column and aligned
+service rows. Identity/access is part of the same framework, not a floating box
+or a tall empty rail. It does not invent a VNet, subnet, or private endpoint to make
 an illustration look more technical.
 
 ## The repeatable template
 
 | Layer | Question it answers |
 | --- | --- |
-| Channels | Where does the user start? |
-| Edge & API policies | What governs the approved entry point? |
-| Experience & runtime | Who owns the interaction and execution? |
-| Models | What provides inference, and which platform hosts it? |
-| Grounding & retrieval | How is authorized context obtained? |
-| Governed interfaces | How are operational sources accessed safely? |
-| Source systems | Where does authoritative data live? |
-| Background preparation | What happens before interactive queries? |
+| Experience | Where does the user enter through the selected channel or gateway? |
+| Identity & access | Which explicit identity, governance or other cross-cutting services are involved? |
+| Application & orchestration | Which application, agent or API owns the interaction? |
+| AI & grounding | Which model and retrieval services support that application? |
+| Data & preparation | Where are authoritative sources and background content preparation? |
 
 Identity, security, readiness, operations, and deployment posture are recorded
 separately. Source permissions remain independent: for example, semantic-model
@@ -59,10 +64,11 @@ decision. Confirmation paths must not be treated as already enabled access.
 
 Use **Diagram detail** to switch between high-level integration, entry/orchestration,
 models, data access, and background preparation. Zoom controls help inspect the
-diagram. Integration arrows carry inline relationship labels. Mermaid's numbered
-steps are the main user journey, not an inferred sequence through every service.
-The generator targets 6-9 core diagram nodes (maximum 12), up to 18 integration
-relationships and at most eight short flow steps. Supporting inventory services
+diagram. Integration arrows carry nearby relationship labels. The Mermaid flow
+includes explicit decisions and alternative terminal outcomes, not an inferred
+linear sequence through every service. The generator targets 5-8 core diagram
+nodes (maximum 12), up to 18 integrations and at most eight flow nodes.
+Supporting inventory services
 can remain unpictured; their sizing and controls stay in the Technical view.
 
 ## Presentation structure
@@ -82,16 +88,22 @@ unresolved issues; unreviewed output is never labelled review-approved.
 
 ## Result and review contract
 
-Contract version 4 separates generation provenance from review state and includes
-an explicit AI-authored `highLevelFlow`.
+Contract version 5 separates the text recommendation, visual artifact and review
+scope. Text responses contain `architecture: null` and a stable `reportId`.
+The background artifact carries the same `reportId`, its own `id`, `graph`, `flow`,
+rendered `svg` and `mermaid`. Its service references must belong to the recommendation.
 `generation` identifies the configured model and actual API reasoning effort.
 `review.status` is `not-requested`, `passed`, or `issues-found`; `aiValidated` is
-true only for `passed`. Review findings do not invalidate the generated artifact.
+true only for `passed`. `review.scope` distinguishes the recommendation alone
+from the recommendation plus a specific architecture artifact. Review findings
+do not invalidate the generated recommendation. Concurrent review and image
+completion preserve each other's results.
 
 `POST /api/tiebreak` defaults to `operation: "generate"`. An explicit
-`operation: "review"` requires the current report in `previousRecommendation`
-and returns that same architecture with review metadata. It does not rerun the
-deterministic engine or architect. New generation/refinement resets review state.
+`operation: "architecture"` requires the current report and returns it with a visual
+artifact, without changing its narrative/services. `operation: "review"` returns
+review metadata for the supplied snapshot. Neither operation reruns the deterministic
+engine. New generation/refinement resets review and visual state.
 Older saved report formats must be regenerated rather than relabelled reviewed.
 
 Every slide includes the Microsoft logo and:

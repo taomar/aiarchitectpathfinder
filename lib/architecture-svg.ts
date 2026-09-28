@@ -1,6 +1,6 @@
 import type { ArchitectureDecision, DecisionInput } from "./types";
 import { buildArchitectureView, type ArchitectureView } from "./architecture-view";
-import { buildArchitectureLayout, connectionStyle, DIAGRAM_LEGEND, type DiagramFocus } from "./architecture-layout";
+import { buildArchitectureLayout, connectionStyle, DIAGRAM_LEGEND, wrapDiagramLabel, type DiagramFocus } from "./architecture-layout";
 
 const xml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 export function wrapArchitectureText(value: string, width: number): string[] {
@@ -16,29 +16,28 @@ const lineText = (lines: string[], x: number, y: number, size: number, color = "
 
 export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<string, string | null>, focus: DiagramFocus = "overview") {
   const graph = buildArchitectureLayout(view, focus);
-  const width = Math.max(1280, graph.width + 80);
+  const width = Math.max(graph.layoutStyle === "stacked" ? 1200 : 1280, graph.width + (graph.layoutStyle === "stacked" ? 0 : 80));
   const contextLines = wrapArchitectureText(`${view.audience.join(", ") || "Users as selected"}  •  ${view.actionBoundary}`, Math.floor((width - 68) / 8));
   const contextHeight = contextLines.length * 22;
   const disclaimerY = 72 + contextHeight;
-  const top = disclaimerY + 82;
+  const top = graph.layoutStyle === "stacked" ? disclaimerY + 12 : disclaimerY + 82;
   const left = (width - graph.width) / 2;
   const body: string[] = [];
   body.push(lineText([graph.title], 34, 44, 29, "#17344F", true));
   body.push(lineText(contextLines, 34, 77, 16, "#4B637B"));
-  body.push(`<rect x="34" y="${disclaimerY}" width="${width - 68}" height="35" rx="3" fill="#FFF4DB"/>`);
-  body.push(lineText([view.disclaimer], 47, disclaimerY + 24, 16, "#795711", true));
-  body.push(lineText(["Visible boxes show logical layers and service boundaries, not verified network isolation."], 34, disclaimerY + 60, 14, "#506880"));
+  if (graph.layoutStyle !== "stacked") {
+    body.push(`<rect x="34" y="${disclaimerY}" width="${width - 68}" height="35" rx="3" fill="#FFF4DB"/>`);
+    body.push(lineText([view.disclaimer], 47, disclaimerY + 24, 16, "#795711", true));
+    body.push(lineText(["Logical layers, not verified network isolation."], 34, disclaimerY + 60, 14, "#506880"));
+  }
   body.push(`<g transform="translate(${left} ${top})" data-connected-architecture="true">`);
   for (const group of graph.groups) {
     const stacked = graph.layoutStyle === "stacked";
-    body.push(`<g data-boundary-id="${xml(group.id)}"${stacked ? ` data-stack-band="${group.id === "cross-cutting" ? "control-rail" : "layer"}"` : ""}><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="2" fill="#${group.fill}" stroke="${graph.highLevel ? "#6B8FAE" : "#A9BDCF"}" stroke-width="${graph.highLevel ? 1.8 : 1.3}"/>`);
-    if (stacked) {
-      body.push(lineText([group.title], group.x + 18, group.y + 29, 18, "#244764", true));
-      if (group.id === "cross-cutting") body.push(lineText([group.subtitle], group.x + 18, group.y + 50, 12, "#52657B"));
-      else {
-        body.push(lineText([group.subtitle], group.x + group.width - 18, group.y + 28, 12, "#52657B", false, "end"));
-        body.push(`<line x1="${group.x + 16}" y1="${group.y + 41}" x2="${group.x + group.width - 16}" y2="${group.y + 41}" stroke="#C8D8E6" stroke-width="1"/>`);
-      }
+    body.push(`<g data-boundary-id="${xml(group.id)}"${stacked ? ` data-stack-band="layer"` : ""}><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" fill="#${group.fill}" stroke="#D6E0EB" stroke-width="1"/>`);
+    if (stacked && group.labelRailWidth) {
+      body.push(`<rect x="${group.x}" y="${group.y}" width="${group.labelRailWidth}" height="${group.height}" fill="#153B60"/>`);
+      const title = wrapDiagramLabel(group.title, 20);
+      body.push(lineText(title, group.x + 22, group.y + group.height / 2 - (title.length - 1) * 12 + 6, 18, "#FFFFFF", true));
     } else {
       body.push(lineText([group.title], group.x + 12, group.y + 19, 14, "#244764", true));
       body.push(lineText([group.subtitle], group.x + 12, group.y + group.height + 16, 11.5, "#566D83"));
@@ -54,15 +53,19 @@ export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<st
     const node = placed.node;
     const pending = node.state === "confirm" || !node.required;
     body.push(`<g ${placed.annotation ? "data-control-id" : "data-component-id"}="${xml(node.id)}" data-layer="${node.layer}"${node.provider ? ` data-provider="${node.provider}"` : ""}><title>${xml([node.detail, ...node.controls].join(" · "))}</title>`);
-    if (graph.layoutStyle !== "stacked" || pending) body.push(`<rect x="${placed.x}" y="${placed.y}" width="${placed.width}" height="${placed.height}" rx="3" fill="#FFFFFF" stroke="${pending ? "#A9771D" : "#B6C7D8"}" stroke-width="1.2"${pending ? ' stroke-dasharray="6 4"' : ""}/>`);
+    if (!placed.reference && (graph.layoutStyle !== "stacked" || pending)) body.push(`<rect x="${placed.x}" y="${placed.y}" width="${placed.width}" height="${placed.height}" rx="3" fill="#FFFFFF" stroke="${pending ? "#A9771D" : "#B6C7D8"}" stroke-width="1.2"${pending ? ' stroke-dasharray="6 4"' : ""}/>`);
     const image = node.icon ? icons ? icons.get(node.icon) : node.icon : null;
-    const iconSize = graph.highLevel ? 48 : 44;
-    if (image) body.push(`<image href="${xml(image)}" x="${placed.x + placed.width / 2 - iconSize / 2}" y="${placed.y + 16}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid meet" aria-hidden="true"/>`);
+    const iconSize = placed.reference ? placed.compact ? 34 : 44 : placed.compact ? 40 : graph.highLevel ? 48 : 44;
+    const iconX = placed.compact ? placed.x + 4 : placed.x + placed.width / 2 - iconSize / 2;
+    const iconY = placed.compact ? placed.y + (placed.height - iconSize) / 2 : placed.y + (placed.reference ? 0 : 16);
+    if (image) body.push(`<image href="${xml(image)}" x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid meet" aria-hidden="true"/>`);
     else {
-      const cx = placed.x + placed.width / 2;
-      const cy = placed.y + 38;
+      const cx = placed.compact ? iconX + iconSize / 2 : placed.x + placed.width / 2;
+      const cy = placed.compact || placed.reference ? iconY + iconSize / 2 : placed.y + 38;
       body.push('<g data-generic-component="true" aria-hidden="true">');
-      if (placed.glyph === "person") body.push(`<circle cx="${cx}" cy="${cy - 16}" r="8" fill="#E5F0F9" stroke="#365875" stroke-width="2"/><rect x="${cx - 16}" y="${cy - 3}" width="32" height="30" rx="12" fill="#E5F0F9" stroke="#365875" stroke-width="2"/>`);
+      if (placed.reference && placed.glyph === "window") body.push(`<rect x="${cx - 20}" y="${cy - 16}" width="40" height="32" rx="3" fill="#F6F9FC" stroke="#42617D" stroke-width="1.8"/><path d="M ${cx - 20} ${cy - 8} H ${cx + 20}" stroke="#42617D" stroke-width="1.4"/><circle cx="${cx - 14}" cy="${cy - 12}" r="1.5" fill="#42617D"/>`);
+      else if (placed.reference && placed.glyph === "pipeline") body.push(`<path d="M ${cx - 20} ${cy} H ${cx + 20}" stroke="#42617D" stroke-width="2"/><rect x="${cx - 20}" y="${cy - 9}" width="12" height="18" rx="2" fill="#E9F0F7" stroke="#42617D"/><rect x="${cx + 8}" y="${cy - 9}" width="12" height="18" rx="2" fill="#E9F0F7" stroke="#42617D"/>`);
+      else if (placed.glyph === "person") body.push(`<circle cx="${cx}" cy="${cy - 16}" r="8" fill="#E5F0F9" stroke="#365875" stroke-width="2"/><rect x="${cx - 16}" y="${cy - 3}" width="32" height="30" rx="12" fill="#E5F0F9" stroke="#365875" stroke-width="2"/>`);
       else if (placed.glyph === "phone") body.push(`<rect x="${cx - 13}" y="${cy - 23}" width="26" height="45" rx="4" fill="#F2F6FA" stroke="#55758F" stroke-width="2"/><line x1="${cx - 7}" x2="${cx + 7}" y1="${cy - 17}" y2="${cy - 17}" stroke="#55758F" stroke-width="2"/><circle cx="${cx}" cy="${cy + 16}" r="2" fill="#55758F"/>`);
       else {
         body.push(`<rect x="${cx - 25}" y="${cy - 18}" width="50" height="35" rx="3" fill="#F2F6FA" stroke="#55758F" stroke-width="2"/>`);
@@ -71,15 +74,21 @@ export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<st
       }
       body.push("</g>");
     }
-    body.push(lineText(placed.labelLines, placed.x + placed.width / 2, placed.y + (graph.highLevel ? 92 : 82), graph.highLevel ? 18 : 16, "#153750", true, "middle"));
-    body.push(lineText([placed.caption], placed.x + placed.width / 2, placed.y + placed.height - 12, 10.5, pending ? "#805E18" : "#536D82", false, "middle"));
+    const labelTop = placed.compact ? placed.y + (placed.height - placed.labelLines.length * 24) / 2 + 18 : placed.y + (placed.reference ? 64 : graph.highLevel ? 92 : 82);
+    body.push(lineText(placed.labelLines, placed.compact ? placed.x + 48 : placed.x + placed.width / 2,
+      labelTop, graph.highLevel ? 18 : 16, "#153750", true, placed.compact ? "start" : "middle"));
+    if (placed.caption) body.push(lineText([placed.caption], placed.compact ? placed.x + 48 : placed.x + placed.width / 2,
+      placed.compact ? labelTop + placed.labelLines.length * 24 : placed.y + placed.height - 12,
+      10.5, pending ? "#805E18" : "#536D82", false, placed.compact ? "start" : "middle"));
     body.push("</g>");
   }
   for (const connection of graph.connections) {
     const style = connectionStyle(connection.edge.kind);
     if (graph.highLevel) {
       const box = connection.labelBox;
-      body.push(`<g data-connection-label="${connection.id}"><rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="3" fill="#FFFFFF"/>`);
+      body.push(`<g data-connection-label="${connection.id}">`);
+      if (connection.labelLeader) body.push(`<path d="${connection.labelLeader.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ")}" fill="none" stroke="#${style.color}" stroke-width="0.9" opacity="0.65"/>`);
+      body.push(`<rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="3" fill="#FFFFFF"/>`);
       body.push(lineText(connection.labelLines, connection.labelPoint.x, box.y + 19, 14, `#${style.color}`, false, "middle"));
       body.push("</g>");
       continue;
@@ -115,6 +124,10 @@ export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<st
     body.push(lineText([style.label], x + 45, y + 4, 12, "#405B72"));
   }
   y += 45;
+  if (graph.layoutStyle === "stacked") {
+    body.push(lineText([view.disclaimer], 34, y + 8, 13, "#795711"));
+    y += 25;
+  }
   if (!graph.highLevel) {
   const notes = [
     { title: "Identity & authorization", items: [...view.controls.identity, ...view.controls.security] },

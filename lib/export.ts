@@ -182,8 +182,8 @@ ${decision.finalRecommendation}
 ${reportDetailSections(input, decision, review, refinement).map((section) => `### ${section.title}\n${section.items.map((item) => `- ${item}`).join("\n")}`).join("\n\n")}
 
 ## Service Flow
-\`\`\`mermaid
-${buildMermaidDiagram(decision)}
-\`\`\`
+${decision.authority === "ai" && !decision.highLevelFlow
+  ? "Architecture and flow are being prepared separately. This export contains the recommendation text."
+  : `\`\`\`mermaid\n${buildMermaidDiagram(decision)}\n\`\`\``}
 `;
 }

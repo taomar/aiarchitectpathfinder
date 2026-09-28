@@ -1,7 +1,7 @@
 require("tsx/cjs");
 const assert = require("node:assert/strict");
 const { POST, GET } = require("../app/api/tiebreak/route.ts");
-const { recommendationFixture } = require("./qa/recommendation-fixture.ts");
+const { recommendationFixture, architectureFixture } = require("./qa/recommendation-fixture.ts");
 const { emptyInput } = require("../lib/types.ts");
 const { RECOMMENDATION_CONTRACT_VERSION } = require("../lib/recommendation-contract.ts");
 
@@ -28,12 +28,17 @@ async function main() {
     const body = JSON.parse(init.body);
     const data = JSON.parse(body.messages[1].content);
     const judging = body.messages[0].content.includes("independent solution-architecture reviewer");
+    const drawing = body.messages[0].content.includes("already-written AI recommendation");
     let reply;
     if (judging) {
       judgeCalls++;
       assert.equal(data.useCase.summary, input.summary);
       assert.equal(data.deterministicDraft, undefined);
       reply = { passed: accept, issues: accept ? [] : ["The test AI reviewer rejected the proposal."], summary: accept ? "The proposed AI architecture fits the scenario." : "Revise the proposal." };
+    } else if (drawing) {
+      assert.deepEqual(data.recommendation, recommendationFixture(input.summary));
+      assert.equal(data.deterministicDraft, undefined);
+      reply = architectureFixture();
     } else {
       assert.equal(data.useCase.summary, input.summary);
       assert.ok(data.deterministicDraft);
@@ -55,6 +60,7 @@ async function main() {
   assert.equal(report.generation.reasoningEffort, "xhigh");
   assert.equal(report.review.status, "not-requested");
   assert.equal(report.aiValidated, false);
+  assert.equal(report.architecture, null);
   console.log("PASS real route returns the AI-selected architecture rather than the supplied or deterministic route");
 
   const status = await GET(new Request("http://localhost/api/tiebreak"));
@@ -70,10 +76,18 @@ async function main() {
   assert.equal(findings.review.status, "issues-found");
   assert.ok(findings.review.issues.length > 0);
   assert.equal(findings.aiValidated, false);
-  assert.deepEqual(findings.architectureGraph, report.architectureGraph);
+  assert.equal(findings.architecture, null);
   assert.deepEqual(findings.recommendedStack, report.recommendedStack);
   assert.equal(judgeCalls, 1);
   assert.equal(providerCalls, 2);
+  const visualResponse = await POST(request({ input, operation: "architecture", previousRecommendation: report }));
+  assert.equal(visualResponse.status, 200);
+  const visual = await visualResponse.json();
+  assert.equal(visual.reportId, report.reportId);
+  assert.deepEqual(visual.recommendedStack, report.recommendedStack);
+  assert.match(visual.architecture.svg, /data-stack-band/);
+  assert.equal(providerCalls, 3);
+  assert.equal((await POST(request({ input, operation: "architecture" }))).status, 400);
   assert.equal((await POST(request({ input, operation: "review" }))).status, 400);
   console.log("PASS optional review returns findings alongside the unchanged AI architecture");
 

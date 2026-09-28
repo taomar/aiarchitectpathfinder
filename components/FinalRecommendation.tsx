@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RecommendationPageLayout, type RecommendationTab } from "./RecommendationPageLayout";
-import { AcceptedRecommendationSchema, RECOMMENDATION_CONTRACT_VERSION, recommendationDecision, type AcceptedRecommendation } from "@/lib/recommendation-contract";
+import type { ArchitectureBuildState } from "./ArchitectureBuildNotice";
+import { AcceptedRecommendationSchema, RECOMMENDATION_CONTRACT_VERSION, recommendationDecision, attachRecommendationArchitecture, type AcceptedRecommendation } from "@/lib/recommendation-contract";
 import { RECOMMENDATION_CLIENT_TIMEOUT_MS, REVIEW_CLIENT_TIMEOUT_MS } from "@/lib/recommendation-policy";
 import { RecommendationRequestError, readRecommendationResponse, type RecommendationProgress } from "@/lib/recommendation-progress";
 import { readJsonResponse } from "@/lib/api-response";
@@ -78,12 +79,16 @@ export function FinalRecommendation({
   const [activeTab, setActiveTab] = useState<RecommendationTab>("overview");
   const [userNotes, setUserNotes] = useState("");
   const [appliedNotes, setAppliedNotes] = useState<string | null>(null);
-  const [architectureRequested, setArchitectureRequested] = useState(false);
   const [diagramRevision, setDiagramRevision] = useState(0);
   const [diagramUrl, setDiagramUrl] = useState<string | null>(null);
   const [canRefreshAuth, setCanRefreshAuth] = useState(false);
   const [canReview, setCanReview] = useState(false);
   const active = useRef<AbortController | null>(null);
+  const architectureActive = useRef<AbortController | null>(null);
+  const architectureSequence = useRef(0);
+  const [architectureState, setArchitectureState] = useState<ArchitectureBuildState>({
+    phase: "idle", progress: null, message: null
+  });
   const sequence = useRef(0);
   const lastTracked = useRef<string | null>(null);
   const lastRequest = useRef<{ mode: "fast" | "deep"; notes: string | undefined; operation: "generate" | "review" }>({
@@ -104,6 +109,12 @@ export function FinalRecommendation({
     operation: "generate" | "review" = "generate"
   ) => {
     active.current?.abort();
+    if (operation === "generate") {
+      architectureActive.current?.abort();
+      architectureSequence.current++;
+      setArchitectureState(current => current.phase === "building"
+        ? { phase: "error", progress: null, message: "The previous image build was cancelled for this update." } : current);
+    }
     const controller = new AbortController();
     active.current = controller;
     const request = ++sequence.current;
@@ -135,18 +146,25 @@ export function FinalRecommendation({
         }
       });
       if (controller.signal.aborted || request !== sequence.current) return;
-      setState(current => ({ ...current, phase: "ready", report: result, message: null, issues: [] }));
+      setState(current => ({
+        ...current, phase: "ready", message: null, issues: [],
+        report: operation === "review" && current.report?.reportId === result.reportId
+          ? { ...current.report, review: result.review, aiValidated: result.aiValidated, agentTrace: result.agentTrace }
+          : result
+      }));
       if (operation === "generate") {
         setAppliedNotes(notes?.trim() || null);
         setUserNotes("");
-        setArchitectureRequested(false);
         setDiagramUrl(null);
+        setDiagramRevision(value => value + 1);
       }
     } catch (error) {
       if (controller.signal.aborted || request !== sequence.current) return;
       console.error("[recommendation] Generation did not complete:", error instanceof Error ? error.message : String(error));
       setState(current => ({
-        ...current, phase: "error", report: previous, message: aiReviewErrorMessage(error),
+        ...current, phase: "error",
+        report: operation === "review" && current.report?.reportId === previous?.reportId ? current.report : previous,
+        message: aiReviewErrorMessage(error),
         issues: error instanceof RecommendationRequestError ? error.issues : []
       }));
     } finally {
@@ -160,10 +178,60 @@ export function FinalRecommendation({
     setAppliedNotes(null);
     setUserNotes("");
     setActiveTab("overview");
-    setArchitectureRequested(false);
     void generate("fast", undefined, null, "loading");
-    return () => { active.current?.abort(); sequence.current++; };
+    return () => { active.current?.abort(); architectureActive.current?.abort(); sequence.current++; architectureSequence.current++; };
   }, [generate]);
+
+  const reportId = report?.reportId;
+  useEffect(() => {
+    if (!report || report.outcome !== "recommended") {
+      setArchitectureState({ phase: "idle", progress: null, message: null });
+      return;
+    }
+    if (report.architecture) {
+      setArchitectureState({ phase: "ready", progress: null, message: null });
+      setDiagramUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(report.architecture.svg)}`);
+      return;
+    }
+    const controller = new AbortController();
+    architectureActive.current = controller;
+    const request = ++architectureSequence.current;
+    const snapshot = report;
+    setArchitectureState({ phase: "building", progress: null, message: null });
+    void (async () => {
+      try {
+        const response = await fetch("/api/tiebreak", {
+          method: "POST", credentials: "include", cache: "no-store",
+          headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
+          body: JSON.stringify({ input, operation: "architecture", previousRecommendation: snapshot }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(RECOMMENDATION_CLIENT_TIMEOUT_MS)])
+        });
+        const result = await readRecommendationResponse(response, progress => {
+          if (!controller.signal.aborted && request === architectureSequence.current) {
+            setArchitectureState({ phase: "building", progress, message: null });
+          }
+        });
+        if (controller.signal.aborted || request !== architectureSequence.current) return;
+        if (result.reportId !== snapshot.reportId || !result.architecture) {
+          throw new RecommendationRequestError("The image response did not match the displayed recommendation.", "AI_OUTPUT_INVALID");
+        }
+        const artifact = result.architecture;
+        setState(current => current.report?.reportId === snapshot.reportId
+          ? { ...current, report: attachRecommendationArchitecture(current.report, artifact) } : current);
+        setDiagramUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.architecture.svg)}`);
+        setArchitectureState({ phase: "ready", progress: null, message: null });
+      } catch (error) {
+        if (controller.signal.aborted || request !== architectureSequence.current) return;
+        console.error("[architecture] Background build failed:", error instanceof Error ? error.message : String(error));
+        setArchitectureState({ phase: "error", progress: null, message: aiReviewErrorMessage(error) });
+      } finally {
+        if (architectureActive.current === controller) architectureActive.current = null;
+      }
+    })();
+    return () => { controller.abort(); architectureSequence.current++; };
+    // A review only changes metadata; it must not restart or replace a pending visual job.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportId, diagramRevision]);
 
   useEffect(() => {
     if (!canRefreshAuth) return;
@@ -185,7 +253,7 @@ export function FinalRecommendation({
 
   useEffect(() => {
     if (!acceptedDecision || !report || busy) return;
-    const fingerprint = JSON.stringify({ graph: report.architectureGraph, summary: report.proposedArchitectureSummary });
+    const fingerprint = report.reportId;
     if (lastTracked.current === fingerprint) return;
     lastTracked.current = fingerprint;
     trackArchitectureOutput({
@@ -198,6 +266,7 @@ export function FinalRecommendation({
   const leave = (navigate: () => void) => {
     if ((userNotes.trim() || appliedNotes) && !window.confirm("Your AI recommendation and review notes are session-only. Export before leaving. Leave this recommendation?")) return;
     active.current?.abort();
+    architectureActive.current?.abort();
     navigate();
   };
   const retry = () => void generate(
@@ -232,8 +301,13 @@ export function FinalRecommendation({
     activeTab={activeTab} onTab={setActiveTab} userNotes={userNotes} onNotes={setUserNotes} appliedNotes={appliedNotes}
     onRefine={() => update()} onReview={review} onApplyReviewFeedback={() => update(true)} onRetry={retry}
     onBack={() => leave(onBack)} onReset={() => leave(onReset)}
-    architectureRequested={architectureRequested} diagramRevision={diagramRevision} diagramUrl={diagramUrl}
-    onDiagram={() => { setArchitectureRequested(true); setDiagramRevision(value => value + 1); }}
+    diagramRevision={diagramRevision} diagramUrl={diagramUrl}
+    architectureState={architectureState}
+    onDiagram={() => {
+      if (busy) return;
+      setState(current => current.report ? { ...current, report: { ...current.report, architecture: null } } : current);
+      setDiagramRevision(value => value + 1);
+    }}
     onDiagramGenerated={diagramGenerated} usageSession={usageSession}
   />;
 }

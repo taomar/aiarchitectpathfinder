@@ -7,7 +7,7 @@ import type { ModelOutputSchema } from "./model-output-schema";
 
 export type AiRole = "wizard" | "architecture" | "judge";
 export type ReasoningEffort = typeof AI_REASONING_EFFORTS[number];
-export const AI_POLICY_VERSION = "9.1-high-level-sol-max";
+export const AI_POLICY_VERSION = "10.0-recommendation-first";
 
 export class AiRoleConfigurationError extends Error {
   readonly code = "AI_ROLE_NOT_CONFIGURED";

@@ -3,11 +3,11 @@ import type { ArchitectureLayout, DiagramBox, DiagramConnection, DiagramGroup, D
 type Point = { x: number; y: number };
 class RouteUnavailable extends Error {}
 const LAYERS = [
-  { id: "experience", title: "Experience & access", subtitle: "User channels and approved entry points", layers: ["channels", "edge"], fill: "F3F7FC" },
-  { id: "application", title: "Application & orchestration", subtitle: "Workload runtime and service integration", layers: ["runtime", "interfaces"], fill: "EDF5FC" },
-  { id: "intelligence", title: "AI & grounding", subtitle: "Models, agents and authorized retrieval", layers: ["models", "grounding"], fill: "F4F2FA" },
-  { id: "data", title: "Data & knowledge", subtitle: "Authoritative sources and source-owned permissions", layers: ["data"], fill: "EFF8F4" },
-  { id: "preparation", title: "Content preparation", subtitle: "Background ingestion, separate from the user journey", layers: ["preparation"], fill: "F5F7F9" }
+  { id: "experience", title: "Experience", subtitle: "User channels and approved entry points", layers: ["channels", "edge"] },
+  { id: "cross-cutting", title: "Identity & access", subtitle: "Cross-cutting controls", layers: ["identity", "security", "operations", "network"] },
+  { id: "application", title: "Application & orchestration", subtitle: "Workload runtime and service integration", layers: ["runtime", "interfaces"] },
+  { id: "intelligence", title: "AI & grounding", subtitle: "Models and authorized retrieval", layers: ["models", "grounding"] },
+  { id: "data", title: "Data & preparation", subtitle: "Sources and background preparation", layers: ["data", "preparation"] }
 ];
 const CROSS_CUTTING = ["identity", "security", "operations", "network"];
 const inflate = (box: DiagramBox, padding: number): DiagramBox => ({
@@ -98,99 +98,90 @@ function labelAlongRoute(points: Point[], width: number, height: number, obstacl
   return undefined;
 }
 
-function routeThroughLabel(
-  start: Point, end: Point, width: number, height: number,
-  routeObstacles: DiagramBox[], labelObstacles: DiagramBox[], bounds: DiagramBox, xs: number[], ys: number[]
+function placeNearbyLabel(
+  points: Point[], width: number, height: number,
+  obstacles: DiagramBox[], bounds: DiagramBox, xs: number[], ys: number[]
 ) {
-  const candidates = xs.flatMap(x => ys.map(y => ({ x: x - width / 2, y: y - height / 2, width, height })))
+  const nearestPoint = (target: Point) => points.slice(1).map((end, index) => {
+    const start = points[index];
+    return start.x === end.x
+      ? { x: start.x, y: Math.max(Math.min(start.y, end.y), Math.min(Math.max(start.y, end.y), target.y)) }
+      : { x: Math.max(Math.min(start.x, end.x), Math.min(Math.max(start.x, end.x), target.x)), y: start.y };
+  }).sort((a, b) => distance(a, target) - distance(b, target))[0];
+  const labelXs = [...new Set([...xs, ...Array.from({ length: Math.floor(bounds.width / 40) }, (_, index) => 20 + index * 40)])];
+  const labelYs = [...new Set([...ys, ...Array.from({ length: Math.floor(bounds.height / 24) }, (_, index) => 12 + index * 24)])];
+  const candidates = labelXs.flatMap(x => labelYs.map(y => ({ x: x - width / 2, y: y - height / 2, width, height })))
     .filter(box => box.x > 8 && box.y > 8 && box.x + width < bounds.width - 8 && box.y + height < bounds.height - 8 &&
-      !labelObstacles.some(obstacle => intersects(inflate(box, 6), obstacle)))
-    .sort((a, b) => distance(start, center(a)) + distance(center(a), end) - distance(start, center(b)) - distance(center(b), end));
-  for (const labelBox of candidates.slice(0, 48)) {
-    const left = { x: labelBox.x - 12, y: center(labelBox).y };
-    const right = { x: labelBox.x + width + 12, y: center(labelBox).y };
-    const directions = start.x <= end.x ? [[left, right], [right, left]] : [[right, left], [left, right]];
-    for (const [entry, exit] of directions) {
-      try {
-        const obstacles = [...routeObstacles, inflate(labelBox, 5)];
-        const before = orthogonalRoute(start, entry, obstacles, xs, ys);
-        const after = orthogonalRoute(exit, end, obstacles, xs, ys);
-        return { labelBox, points: simplify([...before, ...after]) };
-      } catch (error) {
-        if (!(error instanceof RouteUnavailable)) throw error;
+      !obstacles.some(obstacle => intersects(inflate(box, 5), obstacle)))
+    .sort((a, b) => distance(nearestPoint(center(a)), center(a)) - distance(nearestPoint(center(b)), center(b)));
+  for (const labelBox of candidates.slice(0, 192)) {
+    const target = center(labelBox), start = nearestPoint(target);
+    for (const corner of [{ x: start.x, y: target.y }, { x: target.x, y: start.y }]) {
+      if (clearSegment(start, corner, obstacles) && clearSegment(corner, target, obstacles)) {
+        return { labelBox, labelLeader: simplify([start, corner, target]) };
       }
     }
   }
-  throw new Error("The stacked architecture has no unobstructed connection-label corridor.");
+  throw new Error("The stacked architecture has no readable connection-label position.");
 }
 
-export function stackArchitecture(base: ArchitectureLayout): ArchitectureLayout {
+export function createStackedTemplate(base: ArchitectureLayout): ArchitectureLayout {
   const groups: DiagramGroup[] = [];
   const nodes: DiagramNode[] = [];
-  const railNodes = base.nodes.filter(item => CROSS_CUTTING.includes(item.node.layer));
   const activeLayers = LAYERS.map(layer => ({
     ...layer, nodes: base.nodes.filter(item => layer.layers.includes(item.node.layer))
   })).filter(layer => layer.nodes.length);
-  const assigned = activeLayers.reduce((count, layer) => count + layer.nodes.length, railNodes.length);
+  const assigned = activeLayers.reduce((count, layer) => count + layer.nodes.length, 0);
   if (assigned !== base.nodes.length) throw new Error("An AI component has no reference-architecture presentation layer.");
-  const cellWidth = Math.max(220, ...base.nodes.map(node => node.width));
-  const columns = Math.min(3, Math.max(1, ...activeLayers.map(layer => layer.nodes.length)));
-  const gapX = Math.max(180, ...base.connections.map(connection => connection.labelBox.width + 64));
-  const mainX = 120;
-  const mainWidth = Math.max(820, columns * cellWidth + (columns - 1) * gapX + 64);
-  const mainRows: Array<{ top: number; bottom: number }> = [];
+  const mainX = 36, mainWidth = 1128, labelRailWidth = 238;
+  const contentX = mainX + labelRailWidth + 30;
+  const cellWidth = (mainWidth - labelRailWidth - 60) / 3;
   let y = 24;
   for (const layer of activeLayers) {
     const firstY = y;
-    let rowY = y + 76;
     for (let index = 0; index < layer.nodes.length; index += 3) {
       const row = layer.nodes.slice(index, index + 3);
-      const rowHeight = Math.max(...row.map(node => node.height));
-      const rowWidth = row.length * cellWidth + (row.length - 1) * gapX;
-      row.forEach((item, column) => nodes.push({
-        ...item, x: mainX + (mainWidth - rowWidth) / 2 + column * (cellWidth + gapX) + (cellWidth - item.width) / 2,
-        y: rowY + (rowHeight - item.height) / 2
-      }));
-      mainRows.push({ top: rowY, bottom: rowY + rowHeight });
-      rowY += rowHeight + 92;
+      const controls = layer.id === "cross-cutting";
+      const rowHeight = Math.max(...row.map(node => node.height)) +
+        (controls ? row.length > 1 ? 132 : 44 : layer.nodes.length > 3 ? 224 : 88);
+      row.forEach((item, column) => {
+        const shift = controls ? 3 - row.length : (3 - row.length) / 2;
+        const cx = contentX + cellWidth * (column + shift + 0.5);
+        nodes.push({ ...item, x: cx - item.width / 2, y: y + (rowHeight - item.height) / 2 });
+      });
+      y += rowHeight;
     }
-    const height = rowY - firstY - 60;
-    groups.push({ id: layer.id, title: layer.title, subtitle: layer.subtitle, fill: layer.fill, x: mainX, y: firstY, width: mainWidth, height });
-    y = firstY + height + 116;
+    groups.push({ id: layer.id, title: layer.title, subtitle: layer.subtitle, fill: "FFFFFF",
+      x: mainX, y: firstY, width: mainWidth, height: y - firstY, labelRailWidth });
   }
-  const railWidth = cellWidth + 48;
-  const railHeight = railNodes.reduce((height, item) => height + item.height + 42, 74);
-  const totalHeight = Math.max(y - 80, railNodes.length ? railHeight + 48 : 0, 260);
-  const railX = mainX + mainWidth + 220;
-  if (railNodes.length) {
-    const space = Math.max(32, (totalHeight - 92 - railNodes.reduce((height, item) => height + item.height, 0)) / (railNodes.length + 1));
-    let railY = 78 + space;
-    for (const item of railNodes) {
-      nodes.push({ ...item, x: railX + (railWidth - item.width) / 2, y: railY });
-      railY += item.height + space;
-    }
-    groups.push({ id: "cross-cutting", title: "Identity & governance", subtitle: "Cross-cutting services", fill: "F4F5FA",
-      x: railX, y: 24, width: railWidth, height: totalHeight - 48 });
-  }
-  const width = railNodes.length ? railX + railWidth + 64 : mainX + mainWidth + 120;
-  const height = totalHeight + 32;
+  return { ...base, title: "Layered reference architecture", layoutStyle: "stacked",
+    width: 1200, height: y + 24, groups, nodes, connections: [] };
+}
+
+export function stackArchitecture(base: ArchitectureLayout): ArchitectureLayout {
+  const template = createStackedTemplate(base);
+  const { groups, nodes, width, height } = template;
   const bounds = { x: 0, y: 0, width, height };
   const nodeById = new Map(nodes.map(node => [node.node.id, node]));
-  const titleBoxes = groups.map(group => ({ x: group.x + 12, y: group.y + 8, width: Math.min(group.width - 24, 370), height: 34 }));
+  const titleBoxes = groups.map(group => ({ x: group.x, y: group.y, width: group.labelRailWidth!, height: group.height }));
   const obstacles = [...nodes.map(node => inflate(node, 12)), ...titleBoxes];
-  const labelObstacles = [...nodes.map(node => inflate(node, 32)), ...titleBoxes];
+  const labelObstacles = [...nodes.map(node => inflate(node, 8)), ...titleBoxes];
   const xs = [
-    28, 58, 88, mainX + 20, mainX + mainWidth - 20, mainX + mainWidth + 48, mainX + mainWidth + 96,
-    railX - 72, railX - 24, width - 28, ...nodes.flatMap(node => [node.x - 24, node.x + node.width + 24, center(node).x])
+    288, 302, 1168, 1180, ...nodes.flatMap(node => [node.x - 24, node.x + node.width + 24, center(node).x])
   ].filter(value => value > 0 && value < width);
-  const ys = [12, height - 12, ...mainRows.flatMap(row => [row.top - 26, row.bottom + 26, row.bottom + 56, row.bottom + 86]),
+  const rows = [...new Set(nodes.map(node => center(node).y))].sort((a, b) => a - b).map(row => {
+    const items = nodes.filter(node => center(node).y === row);
+    return { top: Math.min(...items.map(node => node.y)), bottom: Math.max(...items.map(node => node.y + node.height)) };
+  });
+  const gapCenters = rows.slice(1).map((row, index) => (rows[index].bottom + row.top) / 2);
+  const ys = [12, height - 12, ...gapCenters, ...groups.flatMap(group => [group.y + 12, group.y + group.height - 12, group.y + group.height]),
     ...nodes.flatMap(node => [node.y - 24, node.y + node.height + 24, center(node).y])].filter(value => value > 0 && value < height);
   const portCounts = new Map<string, number>();
   const port = (node: DiagramNode, other: DiagramNode) => {
     const source = center(node), target = center(other);
     const control = CROSS_CUTTING.includes(node.node.layer);
     const otherControl = CROSS_CUTTING.includes(other.node.layer);
-    const side = control !== otherControl ? (control ? "left" : "bottom")
+    const side = control !== otherControl ? (control ? (source.y < target.y ? "bottom" : "top") : "right")
       : Math.abs(source.y - target.y) < 4 ? (source.x < target.x ? "right" : "left")
       : source.y < target.y ? "bottom" : "top";
     const key = `${node.node.id}:${side}`;
@@ -214,18 +205,16 @@ export function stackArchitecture(base: ArchitectureLayout): ArchitectureLayout 
     let route: Point[];
     try { route = orthogonalRoute(from.outside, to.outside, obstacles, xs, ys); }
     catch (cause) { throw new Error(`Cannot route ${source.node.id} to ${target.node.id} in the stacked architecture.`, { cause }); }
-    let points = simplify([from.anchor, ...route, to.anchor]);
+    const points = simplify([from.anchor, ...route, to.anchor]);
     let labelBox = labelAlongRoute(points, connection.labelBox.width, connection.labelBox.height, labelObstacles, bounds);
+    let labelLeader: Point[] | undefined;
     if (!labelBox) {
-      const labelled = routeThroughLabel(from.outside, to.outside, connection.labelBox.width, connection.labelBox.height, obstacles, labelObstacles, bounds, xs, ys);
+      const labelled = placeNearbyLabel(points, connection.labelBox.width, connection.labelBox.height, labelObstacles, bounds, xs, ys);
       labelBox = labelled.labelBox;
-      points = simplify([from.anchor, ...labelled.points, to.anchor]);
+      labelLeader = labelled.labelLeader;
     }
-    obstacles.push(inflate(labelBox, 5));
     labelObstacles.push(inflate(labelBox, 5));
-    xs.push(labelBox.x - 12, labelBox.x + labelBox.width + 12);
-    ys.push(labelBox.y - 12, labelBox.y + labelBox.height + 12);
-    connections.push({ ...connection, points, labelBox, labelPoint: center(labelBox) });
+    connections.push({ ...connection, points, labelBox, labelLeader, labelPoint: center(labelBox) });
   }
-  return { ...base, title: "Layered reference architecture", layoutStyle: "stacked", width, height, groups, nodes, connections };
+  return { ...template, connections };
 }

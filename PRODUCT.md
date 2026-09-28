@@ -32,6 +32,11 @@ merging baseline services, or re-evaluating the architecture. AI failures remain
 explicit failures; no deterministic recommendation is substituted on that page.
 Model-generated reports are planning guidance, not deployment certification.
 
+CONFIRMED: deliver recommendation text first, then build the architecture and SVG
+in a separate automatic background request. Notify the user without blocking the
+recommendation. Use a clean integrated stacked framework before routing its
+connections; failed or stale image jobs must not discard or overwrite the text.
+
 CONFIRMED: Preserve the original Recommendation page layout. During initial
 generation, a dimmed and inert preliminary draft may be shown, explicitly marked
 as non-final. Server events identify generation or explicitly requested review.

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak, reviewRecommendation, RecommendationFormatError } from "@/lib/azure-openai";
+import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak, reviewRecommendation, buildRecommendationArchitecture, RecommendationFormatError } from "@/lib/azure-openai";
 import { PathfinderApimError } from "@/lib/pathfinder-apim";
 import { decide } from "@/lib/decision-engine";
 import { prepareDecisionInputForRecommendation } from "@/lib/summary-intake";
@@ -12,13 +12,13 @@ import type { GenerationFailure, RecommendationProgress, RecommendationStreamEve
 
 const RequestSchema = z.object({
   input: DecisionInputSchema,
-  operation: z.enum(["generate", "review"]).default("generate"),
+  operation: z.enum(["generate", "review", "architecture"]).default("generate"),
   userNotes: z.string().max(8000).optional(),
   recommendationMode: z.enum(["fast", "deep"]).optional(),
   previousRecommendation: AcceptedRecommendationSchema.optional()
 }).superRefine((request, context) => {
-  if (request.operation === "review" && !request.previousRecommendation) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["previousRecommendation"], message: "Choose a generated architecture to review." });
+  if (request.operation !== "generate" && !request.previousRecommendation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["previousRecommendation"], message: "A generated recommendation is required." });
   }
 });
 
@@ -152,6 +152,8 @@ export async function POST(req: Request) {
     const generate = (signal: AbortSignal, onProgress?: (event: RecommendationProgress) => void) =>
       parsed.data.operation === "review"
         ? reviewRecommendation(parsed.data.input, parsed.data.previousRecommendation!, parsed.data.userNotes, { signal, onProgress })
+        : parsed.data.operation === "architecture"
+        ? buildRecommendationArchitecture(parsed.data.previousRecommendation!, { signal, onProgress })
         : tieBreak(parsed.data.input, deterministicDraft!, parsed.data.userNotes, {
       recommendationMode: mode,
       previousRecommendation: parsed.data.previousRecommendation,

@@ -48,15 +48,22 @@ The default SVG is high-level component integration, not an implementation map.
 The AI targets 6-9 core components, bounded at 12 nodes and 18 relationships.
 Named arrows show integrations directly; there is no numbered connection lookup
 or repeated control-text wall below the drawing. Full-width horizontal bands
-are stacked in order: experience/access, application/orchestration, AI/grounding,
-data/knowledge, and background preparation. Only layers with AI-authored components
-are drawn. Identity, security, operations and network dependencies occupy a separate
-cross-cutting rail alongside the workload.
+are stacked in order: experience, identity/access, application/orchestration,
+AI/grounding, and data/preparation. Only populated layers are drawn.
 
-Icons and product names sit within the bands rather than a free-form grid of cards.
-Orthogonal connections route through reserved clearances, with readable inline
-labels. Each component keeps its declared platform label; the bands are logical
-reference-architecture layers, not claims of network isolation.
+Use one integrated framework: a navy label column identifies compact white
+service rows. Do not use detached oversized boxes or an empty full-height
+identity rail. Place icons and names in aligned slots before routing connections.
+The template's component positions must be independent of connection labels.
+
+Route declared connections second, then place labels without changing the paths
+to wrap around their own text. Aligned adjacent services need direct connectors.
+A small annotation leader is preferable to a looping dependency arrow.
+
+Show recommendation text before building its visual artifact. Start the second
+request automatically and notify building, ready or error without blocking or
+dimming the recommendation. Image retries do not repeat recommendation generation;
+refinement and navigation cancel obsolete image work.
 
 Mermaid is a separate, AI-authored high-level journey of at most eight short
 steps. It is not the integration graph with every policy/preparation link.

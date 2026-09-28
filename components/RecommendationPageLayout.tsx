@@ -9,6 +9,7 @@ import { ArchitectureImage } from "./ArchitectureImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { ExportPPTButton } from "./ExportPPTButton";
 import { RecommendationProgressPanel } from "./RecommendationProgress";
+import { ArchitectureBuildNotice, type ArchitectureBuildState } from "./ArchitectureBuildNotice";
 import { displayPatternName } from "@/lib/pathfinder-category";
 import { QUESTIONS } from "@/lib/questions";
 import type { ArchitectureDecision, DecisionInput } from "@/lib/types";
@@ -113,7 +114,7 @@ type Props = {
   onRetry: () => void;
   onBack: () => void;
   onReset: () => void;
-  architectureRequested: boolean;
+  architectureState: ArchitectureBuildState;
   diagramRevision: number;
   diagramUrl: string | null;
   onDiagram: () => void;
@@ -162,11 +163,12 @@ export function RecommendationPageLayout(props: Props) {
             <Sparkles className="h-4 w-4" /> How this works
           </button>
           <span data-coach="rec-export" className="inline-flex">
-            {report && decision && !generating ? <ExportPPTButton input={input} decision={decision} tieBreak={report}
+            {report && decision && report.architecture && !generating ? <ExportPPTButton input={input} decision={decision} tieBreak={report}
               category={{ category: report.solutionType, description: report.finalRecommendation }}
-              mermaidCode={report.mermaidDiagram} architectureImageDataUrl={props.diagramUrl}
+              mermaidCode={report.architecture.mermaid} architectureImageDataUrl={props.diagramUrl}
               refinement={appliedNotes ?? undefined} usageSession={props.usageSession} compact /> :
-              <button className="btn-compact border border-white/30 bg-white/10 text-white opacity-60" disabled>Export as PowerPoint</button>}
+              <button className="btn-compact border border-white/30 bg-white/10 text-white opacity-60" disabled
+                title={report && !report.architecture ? "Available when the background architecture image is ready." : "Available after recommendation generation."}>Export as PowerPoint</button>}
           </span>
           <button className="btn-compact border border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={props.onBack}>Back to wizard</button>
           <button className="btn-compact border border-white/30 bg-transparent text-white hover:bg-white/10" onClick={props.onReset}>Start over</button>
@@ -198,6 +200,8 @@ export function RecommendationPageLayout(props: Props) {
     </section>
 
     {busy && <RecommendationProgressPanel progress={props.progress} startedAt={props.startedAt} previousAiResult={!!report} issues={issues} operation={props.operation} />}
+    {report && !generating && <ArchitectureBuildNotice state={props.architectureState}
+      onOpen={() => props.onTab("architecture")} onRetry={props.onDiagram} />}
     {message && <section role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
       <p className="font-semibold">{message}</p>
       <p className="mt-1 text-xs">{report ? "Your AI-generated architecture remains available; this request did not change it." : "No AI result was generated. The preliminary preview has not been promoted to a recommendation."}</p>
@@ -289,15 +293,18 @@ export function RecommendationPageLayout(props: Props) {
 
       {activeTab === "architecture" && <>
         <section className="card rounded-xl"><div className="flex flex-wrap items-center justify-between gap-3" data-coach="rec-architecture">
-          <div><h2 className="text-base font-semibold">Layered reference architecture</h2><p className="mt-0.5 text-xs text-gray-500">Stacked logical layers, matching service icons and cross-layer integrations. Identity and governance sit alongside the workload. Rendering does not re-evaluate the architecture.</p></div>
-          <button type="button" className="btn-primary" onClick={props.onDiagram} disabled={generating || !report?.architectureGraph.nodes.length}>{props.architectureRequested ? "Regenerate architecture" : "Generate architecture"}</button>
+          <div><h2 className="text-base font-semibold">Layered reference architecture</h2><p className="mt-0.5 text-xs text-gray-500">A clean stacked framework with matching service icons and the needed connections. The background image build does not change the recommendation.</p></div>
+          {report?.architecture && <button type="button" className="btn-primary" onClick={props.onDiagram} disabled={busy || props.architectureState.phase === "building"}>Rebuild architecture image</button>}
         </div>
-          <div className="mt-3">{props.architectureRequested && report
-            ? <ArchitectureImage decision={decision} input={input} refreshNonce={props.diagramRevision} onGenerated={props.onDiagramGenerated} />
-            : <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-ms-blue/30 bg-[#F7FAFE] p-6 text-center"><span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-ms-blue shadow-sm">+</span><p className="text-sm font-medium text-gray-800">Architecture diagram is ready to generate.</p><p className="mt-1 text-xs text-gray-500">Click Generate architecture to render the AI-authored components and connections.</p></div>}</div>
+          <div className="mt-3">{report?.architecture
+            ? <ArchitectureImage decision={decision} input={input} initialSvg={report.architecture.svg} refreshNonce={props.diagramRevision} onGenerated={props.onDiagramGenerated} />
+            : <div className="rounded-xl border border-dashed border-ms-blue/30 bg-[#F7FAFE] p-6">
+              <p className="text-sm font-medium text-ms-blueDark">The architecture image is built separately from your recommendation.</p>
+              <div className="mt-4 space-y-3" aria-hidden="true">{[1, 2, 3].map(index => <div key={index} className="h-16 rounded border border-[#BBD6F2] bg-white" />)}</div>
+            </div>}</div>
         </section>
         <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">High-level solution flow</h2><p className="mt-0.5 text-sm text-gray-500">The short main journey authored by the AI. Detailed implementation steps remain below.</p></div><span className="badge badge-muted">AI-authored</span></div>
-          <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">{report?.highLevelFlow.length ? <MermaidDiagram code={report.mermaidDiagram} /> : <p className="text-xs text-gray-600">The AI requested clarification before defining the flow.</p>}</div>
+          <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">{report?.architecture ? <MermaidDiagram code={report.architecture.mermaid} /> : <p className="text-xs text-gray-600">The high-level flow will appear when the background architecture build finishes.</p>}</div>
         </section>
         <section className="grid gap-3 xl:grid-cols-2">
           <div className="card rounded-xl"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold">How it works</h2>{badge}</div><ol className="mt-3 space-y-1.5 text-xs">{decision.endToEndFlow.map((step, index) => <li key={index} className="flex gap-2.5 rounded-lg border border-ms-border bg-[#FAFBFC] px-2.5 py-1.5"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ms-blue text-xs font-semibold text-white">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol></div>
@@ -334,14 +341,14 @@ export function RecommendationPageLayout(props: Props) {
 
       {activeTab === "technical" && <>
         <section className="card rounded-xl"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold">Architecture details</h2>{badge}</div><p className="mt-0.5 text-xs text-gray-500">AI-authored layers and component responsibilities.</p><div className="mt-3"><ArchitectureLayerTable layers={decision.architectureLayers} /></div></section>
-        {report && <section className="card rounded-xl"><details>
+        {report?.architecture && <section className="card rounded-xl"><details>
           <summary className="cursor-pointer text-base font-semibold">Detailed controls and boundary conditions</summary>
           <p className="mt-2 text-xs text-gray-500">These AI-authored details are kept out of the high-level diagrams.</p>
-          <div className="mt-3 grid gap-4 md:grid-cols-2">{Object.entries(report.architectureGraph.controls).filter(([, controls]) => controls.length).map(([group, controls]) =>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">{Object.entries(report.architecture.graph.controls).filter(([, controls]) => controls.length).map(([group, controls]) =>
             <div key={group}><h3 className="text-sm font-semibold capitalize">{group}</h3><ul className="mt-2 space-y-2 text-xs">{controls.map((control, index) =>
               <li key={index}><strong>{control.label}</strong>{control.required ? " (required)" : " (recommended)"}<p className="mt-1 text-gray-600">{control.scope}</p></li>)}</ul></div>
           )}</div>
-          {report.architectureGraph.decisions.length > 0 && <div className="mt-4"><h3 className="text-sm font-semibold">Open decisions</h3><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{report.architectureGraph.decisions.map((value, index) => <li key={index}>{value}</li>)}</ul></div>}
+          {report.architecture.graph.decisions.length > 0 && <div className="mt-4"><h3 className="text-sm font-semibold">Open decisions</h3><ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{report.architecture.graph.decisions.map((value, index) => <li key={index}>{value}</li>)}</ul></div>}
         </details></section>}
         {report && <section className="card rounded-xl">
           <h2 className="text-base font-semibold">Services and Dev / Test / Prod sizing</h2>

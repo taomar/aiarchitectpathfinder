@@ -115,7 +115,7 @@ function collectDecisionRecommendationText(decision: ArchitectureDecision, input
 function collectTieBreakRecommendationText(tieBreakResult: TieBreakResponse) {
   return [
     tieBreakResult.proposedArchitectureSummary,
-    tieBreakResult.mermaidDiagram
+    tieBreakResult.architecture?.mermaid
   ].join("\n");
 }
 

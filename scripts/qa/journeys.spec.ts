@@ -56,9 +56,9 @@ for (const scenario of [
         outputs.push({ id: "refined-recommendation", kind: "actual refined API report, same input profile", content: refined.report });
       } else if (scenario.name === "hybrid document search") {
         const deep = await reviewAfter(page, "optional-review", () =>
-          page.getByRole("button", { name: "AI Review (optional)", exact: true }).click(), directory);
+          page.getByRole("button", { name: "AI Review (optional)", exact: true }).click(), directory, "review");
         expect(deep.input).toEqual(initial.input);
-        expect(deep.report.architectureGraph).toEqual(initial.report.architectureGraph);
+        expect(deep.report.architecture?.graph).toEqual(initial.report.architecture?.graph);
         outputs.push({ id: "optional-review", kind: "optional AI findings without architecture regeneration", content: deep.report });
       }
     } catch (error) {

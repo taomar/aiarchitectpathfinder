@@ -4,7 +4,9 @@ Profile an agentic AI use case and generate a platform recommendation, architect
 layers, and exportable diagrams. The wizard builds a preliminary deterministic
 draft. On the Recommendation page, an AI architect evaluates the use case and
 that draft using Sol at maximum supported reasoning (`xhigh`). Its structurally
-valid result is available immediately. **AI Review is optional:** the user can
+valid recommendation text is shown first. A separate automatic background call
+builds its architecture and SVG, with visible completion/error notifications.
+**AI Review is optional:** the user can
 request an independent critique, read its findings, and choose whether to apply
 them. Review does not automatically discard or regenerate the architecture.
 The AI-authored report is authoritative; diagrams and exports render its graph.

@@ -175,7 +175,7 @@ async function main() {
   }));
   const reviewResult = await readRecommendationResponse(reviewed, event => reviewPhases.push(event.stage));
   assert.equal(reviewResult.review.status, "passed");
-  assert.deepEqual(reviewResult.architectureGraph, completedEvents.at(-1).report.architectureGraph);
+  assert.deepEqual(reviewResult.architecture, completedEvents.at(-1).report.architecture);
   assert.deepEqual(reviewPhases, ["handoff", "reviewing", "complete"]);
   console.log("PASS independent review streams only when explicitly requested and preserves the architecture");
 

@@ -15,6 +15,7 @@ export type ViewNode = {
   detail: string;
   layer: ViewLayerId;
   provider?: "azure" | "microsoft-saas" | "external" | "logical";
+  symbol?: "person" | "app" | "api" | "workflow" | "generic";
   kind: "component" | "platform" | "capability" | "source";
   state: ViewState;
   required: boolean;
@@ -344,12 +345,14 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
 
 const mermaidLabel = (value: string) => value.replace(/["<>[\]{}|\r\n]/g, " ").trim();
 
-export function architectureFlowMermaid(steps: string[]): string {
+export function architectureFlowMermaid(flow: import("./recommendation-contract").RecommendationFlow): string {
   const lines = ["flowchart LR"];
-  steps.forEach((step, index) => {
-    lines.push(`  f${index}["${index + 1}. ${mermaidLabel(step)}"]`);
-    if (index) lines.push(`  f${index - 1} --> f${index}`);
+  const ids = new Map(flow.nodes.map((node, index) => [node.id, `f${index}`]));
+  flow.nodes.forEach(node => {
+    const label = `"${mermaidLabel(node.label)}"`;
+    lines.push(`  ${ids.get(node.id)}${node.kind === "decision" ? `{${label}}` : `[${label}]`}`);
   });
+  for (const edge of flow.edges) lines.push(`  ${ids.get(edge.from)} -->${edge.label ? `|"${mermaidLabel(edge.label)}"|` : ""} ${ids.get(edge.to)}`);
   lines.push("  classDef default fill:#EFF6FC,stroke:#0F6CBD,color:#17344F;");
   return lines.join("\n");
 }

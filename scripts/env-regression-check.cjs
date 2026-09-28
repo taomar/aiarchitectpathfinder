@@ -131,11 +131,12 @@ function apiFixture(env, files) {
     }).outputText;
     function requireMock(id) {
       if (id === "fs") return fakeFs;
+      if (id === "node:fs/promises") return { readFile: forbiddenExternalCall };
       if (id === "@azure/identity") return {
         DefaultAzureCredential: class { getToken() { return forbiddenExternalCall(); } }
       };
       if (id.startsWith(".")) return load(path.resolve(path.dirname(file), id));
-      if (["node:crypto", "path", "zod"].includes(id)) return require(id);
+      if (["node:crypto", "node:path", "path", "zod", "@dagrejs/dagre"].includes(id)) return require(id);
       throw new Error(`Unexpected configuration dependency: ${id}`);
     }
     vm.runInThisContext(

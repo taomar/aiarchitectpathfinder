@@ -162,6 +162,7 @@ test("optional review findings stay alongside the architecture until the user ch
   const findings = {
     ...report,
     review: { status: "issues-found" as const, model: "test-reviewer", reasoningEffort: "medium" as const,
+      scope: "recommendation-and-architecture" as const, architectureId: report.architecture.id,
       summary: "Clarify the source authorization boundary.", issues: ["SharePoint must enforce its own document permissions."] }
   };
   await send(page, { type: "result", report: findings }, true);

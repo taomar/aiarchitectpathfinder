@@ -9,12 +9,13 @@ import { availableDiagramFocuses, buildArchitectureLayout, diagramFocusTitle, ty
 export { buildArchitectureSvg } from "@/lib/architecture-svg";
 
 export function ArchitectureImage({
-  decision, input, refreshNonce = 0, onGenerated, onError
+  decision, input, initialSvg, refreshNonce = 0, onGenerated, onError
 }: {
   decision: ArchitectureDecision;
   input?: DecisionInput;
   autoGenerate?: boolean;
   refreshNonce?: number;
+  initialSvg?: string;
   onGenerated?: (dataUrl: string | null) => void;
   onError?: (message: string) => void;
 }) {
@@ -40,6 +41,11 @@ export function ArchitectureImage({
     onGenerated?.(null);
     void (async () => {
       try {
+        if (activeFocus === "overview" && initialSvg) {
+          const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(initialSvg)}`;
+          if (!cancelled) { setSvg(initialSvg); setUrl(dataUrl); onGenerated?.(dataUrl); }
+          return;
+        }
         const paths = [...new Set(buildArchitectureLayout(model, activeFocus).nodes.flatMap(item => item.node.icon ? [item.node.icon] : []))];
         const entries = await Promise.all(paths.map(async path => {
           try {
@@ -72,7 +78,7 @@ export function ArchitectureImage({
     return () => { cancelled = true; controller.abort(); };
     // The serialized model is the authoritative rendering input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelKey, refreshNonce, activeFocus]);
+  }, [modelKey, refreshNonce, activeFocus, initialSvg]);
 
   return (
     <div className="space-y-4">

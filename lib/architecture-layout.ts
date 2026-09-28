@@ -4,9 +4,9 @@ import { stackArchitecture } from "./architecture-stack";
 
 export type DiagramFocus = "overview" | "request" | "models" | "data" | "preparation";
 export type DiagramBox = { x: number; y: number; width: number; height: number };
-export type DiagramNode = DiagramBox & { node: ViewNode; annotation: boolean; labelLines: string[]; caption: string; glyph: "person" | "phone" | "window" | "api" | "code" | "pipeline" | "service" };
+export type DiagramNode = DiagramBox & { node: ViewNode; annotation: boolean; compact?: boolean; reference?: boolean; labelLines: string[]; caption: string; glyph: "person" | "phone" | "window" | "api" | "code" | "pipeline" | "service" };
 export type DiagramEdge = Omit<ViewEdge, "kind"> & { kind: ViewEdge["kind"] | "policy" };
-export type DiagramGroup = DiagramBox & { id: string; title: string; subtitle: string; fill: string };
+export type DiagramGroup = DiagramBox & { id: string; title: string; subtitle: string; fill: string; labelRailWidth?: number };
 export type DiagramConnection = {
   id: string;
   number: number;
@@ -16,6 +16,7 @@ export type DiagramConnection = {
   shortLabel: string;
   labelLines: string[];
   labelBox: DiagramBox;
+  labelLeader?: Point[];
 };
 export type ArchitectureLayout = {
   version: 3;
@@ -48,6 +49,9 @@ const HIGH_LEVEL_GROUPS = [
   { id: "governance", title: "Identity / governance layer", subtitle: "Cross-cutting logical boundary", layers: ["identity", "security", "operations", "network"], fill: "F4F5FA" }
 ];
 const PROVIDER_NAMES = { azure: "Azure", "microsoft-saas": "Microsoft SaaS", external: "External", logical: "Logical" };
+const SYMBOLS: Record<NonNullable<ViewNode["symbol"]>, DiagramNode["glyph"]> = {
+  person: "person", app: "window", api: "api", workflow: "pipeline", generic: "service"
+};
 
 export const DIAGRAM_LEGEND = [
   { kind: "request", color: "156DAF", dash: "", label: "Request / authorized query" },
@@ -62,7 +66,10 @@ export function connectionStyle(kind: DiagramEdge["kind"]) {
 }
 
 export function wrapDiagramLabel(value: string, max = 24) {
-  const words = value.trim().split(/\s+/);
+  const words = value.trim().split(/\s+/).flatMap(word => {
+    const letters = Array.from(word);
+    return Array.from({ length: Math.ceil(letters.length / max) }, (_, index) => letters.slice(index * max, (index + 1) * max).join(""));
+  });
   const lines: string[] = [];
   for (const word of words) {
     const current = lines.at(-1);
@@ -238,7 +245,7 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
     groups: groups.map(group => ({ ...box(`group-${group.id}`), id: group.id, title: group.title, subtitle: group.subtitle, fill: group.fill })),
     nodes: nodes.map(node => ({
       ...box(node.id), node, annotation: annotations.has(node.id), labelLines: labels.get(node.id)!,
-      glyph: isAudience(node) ? "person" : node.id === "mobile" ? "phone" : node.id === "web" ? "window" :
+      glyph: node.symbol ? SYMBOLS[node.symbol] : highLevel ? "service" : isAudience(node) ? "person" : node.id === "mobile" ? "phone" : node.id === "web" ? "window" :
         node.id === "custom-backend" ? "code" : node.layer === "interfaces" || node.id === "business-api" || node.id === "api-channel" ? "api" :
           node.layer === "preparation" ? "pipeline" : "service",
       caption: isAudience(node) ? "User / actor" : highLevel && node.provider
@@ -265,8 +272,29 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
 }
 
 export function buildArchitectureLayout(view: ArchitectureView, focus: DiagramFocus = "overview"): ArchitectureLayout {
+  if (view.authority === "ai" && focus === "overview") {
+    const nodes = view.layers.flatMap(layer => layer.nodes).map(node => {
+      const labelLines = wrapDiagramLabel(node.label, 24);
+      const controls = ["identity", "security", "operations", "network"].includes(node.layer);
+      const pending = node.state === "confirm" || !node.required;
+      return {
+        node, x: 0, y: 0, width: controls ? 246 : Math.max(110, ...labelLines.map(line => line.length * 9 + 16)),
+        height: controls ? Math.max(52, labelLines.length * 23 + 14) : 58 + labelLines.length * 24 + (pending ? 18 : 0),
+        annotation: false, reference: true, compact: controls, labelLines, glyph: node.symbol ? SYMBOLS[node.symbol] : "service" as const,
+        caption: pending ? node.state === "confirm" ? "Implementation to confirm" : "Optional" : ""
+      };
+    });
+    const connections = view.edges.map((edge, index) => {
+      const labelLines = wrapDiagramLabel(edge.label, 26);
+      return {
+        id: `connection-${index + 1}`, number: index + 1, edge, points: [],
+        labelPoint: { x: 0, y: 0 }, shortLabel: edge.label, labelLines,
+        labelBox: { x: 0, y: 0, width: Math.max(64, ...labelLines.map(line => line.length * 7.4 + 18)), height: labelLines.length * 20 + 8 }
+      };
+    });
+    return stackArchitecture({ version: 3, highLevel: true, layoutStyle: "stacked", focus, title: "Layered reference architecture", width: 0, height: 0, groups: [], nodes, connections });
+  }
   const horizontal = createArchitectureLayout(view, focus, "LR");
-  if (view.authority === "ai" && focus === "overview") return stackArchitecture(horizontal);
   if (focus === "overview") return horizontal;
   const vertical = createArchitectureLayout(view, focus, "TB");
   const fit = (graph: ArchitectureLayout) => Math.min(12.04 / graph.width, 4.18 / graph.height);

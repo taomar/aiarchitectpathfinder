@@ -73,18 +73,18 @@ async function main() {
     const decision = recommendationDecision(report);
     const view = buildArchitectureView(decision, example.input);
     assert.deepEqual(view, buildArchitectureView(decision, { ...example.input, dataSources: [], runtimePreferences: [] }));
-    assert.deepEqual(view.edges, report.architectureGraph.edges);
+    assert.deepEqual(view.edges, report.architecture.graph.edges);
     assert.doesNotMatch(renderArchitectureViewSvg(view, new Map()), /NaN|undefined|href="\/ms-icons/);
   }
   console.log("PASS AI graph is independent of all 15 input profiles once accepted");
   await checkDeck(acceptedFixture(), "Standard AI recommendation");
 
   const maximum = acceptedFixture();
-  maximum.architectureGraph.nodes.push(
-    { id: "monitor", label: "Monitor", layer: "operations", provider: "logical", kind: "capability", state: "selected", required: true, icon: "generic", detail: "Synthetic capacity-layout fixture.", controls: [] },
-    { id: "gateway", label: "Gateway", layer: "edge", provider: "logical", kind: "capability", state: "confirm", required: true, icon: "generic", detail: "Synthetic capacity-layout fixture.", controls: [] }
+  maximum.architecture.graph.nodes.push(
+    { id: "monitor", label: "Monitor", layer: "operations", provider: "logical", kind: "capability", state: "selected", required: true, icon: "generic", symbol: "generic", serviceIds: [], detail: "Synthetic capacity-layout fixture.", controls: [] },
+    { id: "gateway", label: "Gateway", layer: "edge", provider: "logical", kind: "capability", state: "confirm", required: true, icon: "generic", symbol: "generic", serviceIds: [], detail: "Synthetic capacity-layout fixture.", controls: [] }
   );
-  maximum.architectureGraph.edges.push(
+  maximum.architecture.graph.edges.push(
     { from: "backend", to: "monitor", kind: "policy", label: "Telemetry" },
     { from: "web", to: "gateway", kind: "conditional", label: "Confirm gateway" }
   );
@@ -92,7 +92,7 @@ async function main() {
   for (let index = maximum.serviceSizing.length; index < 32; index++) maximum.serviceSizing.push({
     id: `synthetic-service-${index}`, name: `Synthetic Azure service ${index}`,
     provider: "azure", purpose: "Synthetic layout fixture, not a real capacity recommendation",
-    nodeIds: ["backend"], dev: cell, test: cell, prod: cell, assumptions: [], references: []
+    dev: cell, test: cell, prod: cell, assumptions: [], references: []
   });
   maximum.assumptions = Array.from({ length: 40 }, () => "A detailed assumption that remains available on the recommendation page. ".repeat(15));
   maximum.riskFlags = Array.from({ length: 40 }, () => "A detailed risk requiring review. ".repeat(20));

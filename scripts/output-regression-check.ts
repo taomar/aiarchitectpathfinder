@@ -15,7 +15,7 @@ import { recommendationDecision, AcceptedRecommendationSchema } from "../lib/rec
 import { toJSON, toMarkdown, reportDetailSections } from "../lib/export";
 import { buildPowerPoint, MAX_POWERPOINT_SLIDES, splitIntoSlideChunks } from "../lib/powerpoint";
 import { withAiRecommendation, recommendationNotes } from "../components/FinalRecommendation";
-import { acceptedFixture } from "./qa/recommendation-fixture";
+import { acceptedFixture, initialFixture } from "./qa/recommendation-fixture";
 
 process.env.AZURE_OPENAI_ENABLED = "false";
 globalThis.fetch = async () => { throw new Error("Network access is forbidden in output checks."); };
@@ -30,6 +30,12 @@ async function main() {
   console.log("PASS legacy wizard drafts still produce valid diagnostic views for all shipped examples");
 
   const input = { ...emptyInput(), summary: "A read-only document web application." };
+  const textFirst = initialFixture(input.summary);
+  const textDecision = recommendationDecision(textFirst);
+  assert.ok(textDecision.recommendedStack.length > 0);
+  assert.equal(textDecision.approvedArchitecture, undefined);
+  assert.match(toMarkdown(input, textDecision, textFirst), /being prepared separately/);
+  assert.equal(JSON.parse(toJSON(input, textDecision, textFirst)).review.architecture, null);
   const report = acceptedFixture(input.summary);
   const poisonedDraft = {
     ...decide(EXAMPLES[0].input),
@@ -55,15 +61,15 @@ async function main() {
   const model = buildArchitectureView(presented, input);
   const contradictoryInput = { ...emptyInput(), users: ["citizens" as const], channels: ["teams" as const], writeBackConfirmed: true };
   assert.strictEqual(buildArchitectureView(presented, contradictoryInput), presented.approvedArchitecture);
-  assert.deepEqual(model.edges, report.architectureGraph.edges);
-  assert.deepEqual(model.layers.flatMap(layer => layer.nodes.map(node => node.id)).sort(), report.architectureGraph.nodes.map(node => node.id).sort());
-  assert.equal(buildMermaidDiagram(presented, contradictoryInput), report.mermaidDiagram);
-  assert.doesNotMatch(report.mermaidDiagram, /subgraph|source boundary/);
-  assert.equal((report.mermaidDiagram.match(/ --> /g) ?? []).length, report.highLevelFlow.length - 1);
-  assert.deepEqual(presented.highLevelFlow, report.highLevelFlow);
+  assert.deepEqual(model.edges, report.architecture.graph.edges);
+  assert.deepEqual(model.layers.flatMap(layer => layer.nodes.map(node => node.id)).sort(), report.architecture.graph.nodes.map(node => node.id).sort());
+  assert.equal(buildMermaidDiagram(presented, contradictoryInput), report.architecture.mermaid);
+  assert.doesNotMatch(report.architecture.mermaid, /subgraph|source boundary/);
+  assert.equal((report.architecture.mermaid.match(/ -->/g) ?? []).length, report.architecture.flow.edges.length);
+  assert.deepEqual(presented.highLevelFlow, report.architecture.flow);
   const layout = buildArchitectureLayout(model);
-  assert.equal(layout.connections.length, report.architectureGraph.edges.length, "No inferred connections may be added by layout.");
-  assert.equal(layout.nodes.length, report.architectureGraph.nodes.length, "No inferred control nodes may be added by layout.");
+  assert.equal(layout.connections.length, report.architecture.graph.edges.length, "No inferred connections may be added by layout.");
+  assert.equal(layout.nodes.length, report.architecture.graph.nodes.length, "No inferred control nodes may be added by layout.");
   assert.ok(layout.nodes.every(node => !node.annotation));
   assert.equal(buildArchitectureSummary(contradictoryInput, presented, "wrong family"), report.proposedArchitectureSummary);
   console.log("PASS diagrams and summaries preserve the AI artifact without deterministic re-evaluation");

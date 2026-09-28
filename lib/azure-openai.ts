@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { loadLocalEnvDefaults } from "./env-defaults";
 import { aiRoleSettings, aiRuntimeStatus, requestAiJson } from "./ai-runtime";
 import {
@@ -7,11 +9,14 @@ import {
   RECOMMENDATION_TIMEOUT_MS, REVIEW_REQUEST_TIMEOUT_MS
 } from "./recommendation-policy";
 import { architectureFlowMermaid } from "./architecture-view";
+import { renderArchitectureViewSvg } from "./architecture-svg";
 import {
-  AiRecommendationSchema, AcceptedRecommendationSchema, recommendationContent,
-  RECOMMENDATION_CONTRACT_VERSION, type AcceptedRecommendation, type RecommendationReview
+  AiRecommendationSchema, AcceptedRecommendationSchema, AiArchitectureSchema,
+  RecommendationArchitectureSchema, approvedArchitectureView, validateArchitectureServices, recommendationContent, attachRecommendationArchitecture,
+  RECOMMENDATION_CONTRACT_VERSION, type AiRecommendation, type AcceptedRecommendation,
+  type RecommendationArchitecture, type RecommendationReview
 } from "./recommendation-contract";
-import { recommendationComposerPrompt, RECOMMENDATION_JUDGE_PROMPT } from "./recommendation-prompts";
+import { recommendationComposerPrompt, RECOMMENDATION_ARCHITECTURE_PROMPT, RECOMMENDATION_JUDGE_PROMPT } from "./recommendation-prompts";
 import type { ArchitectureDecision, DecisionInput } from "./types";
 import { loadPathfinderEnv } from "./pathfinder-apim";
 import type { RecommendationProgress } from "./recommendation-progress";
@@ -57,6 +62,7 @@ export type TieBreakOptions = {
 };
 
 const cache = new Map<string, AcceptedRecommendation>();
+const architectureCache = new Map<string, RecommendationArchitecture>();
 const reviewCache = new Map<string, Exclude<RecommendationReview, { status: "not-requested" }>>();
 export const RecommendationJudgmentSchema = z.object({
   passed: z.boolean(),
@@ -65,6 +71,11 @@ export const RecommendationJudgmentSchema = z.object({
 }).strict();
 const ComposerOutputSchema = modelOutputSchema("architecture_recommendation", AiRecommendationSchema);
 const JudgeOutputSchema = modelOutputSchema("architecture_judgment", RecommendationJudgmentSchema);
+const ArchitectureOutputSchema = modelOutputSchema("recommendation_visuals", AiArchitectureSchema);
+
+export function recommendationId(report: AiRecommendation) {
+  return createHash("sha256").update(JSON.stringify(report)).digest("hex");
+}
 
 function inputOrigin(input: DecisionInput) {
   return input.directTextRecommendation
@@ -110,7 +121,9 @@ export async function tieBreak(
     deterministicDraft: JSON.parse(JSON.stringify(deterministicDraft)),
     deterministicAuthority: "advisory-only; AI may correct or replace all architectural choices",
     refinement: userNotes?.trim() || undefined,
-    previousRecommendation: options.previousRecommendation
+    previousRecommendation: options.previousRecommendation ? {
+      ...recommendationContent(options.previousRecommendation), review: options.previousRecommendation.review
+    } : undefined
   };
   const maxCompletionTokens = options.maxCompletionTokens ?? composer.maxCompletionTokens;
   const key = createHash("sha256").update(JSON.stringify({
@@ -128,7 +141,7 @@ export async function tieBreak(
   for (let attempt = 1; attempt <= RECOMMENDATION_MAX_ATTEMPTS; attempt++) {
     signal.throwIfAborted();
     progress("architect", attempt, attempt === 1
-      ? "Sol is composing the architecture at maximum supported reasoning (xhigh)."
+      ? "Sol is writing the recommendation first at maximum supported reasoning (xhigh)."
       : "Sol is correcting the report format without changing unrelated design decisions.", { model: composer.model });
     const raw = await requestAiJson("architecture", recommendationComposerPrompt(mode), {
       ...context, previousCandidate, repairIssues: issues
@@ -146,24 +159,84 @@ export async function tieBreak(
     const report = AcceptedRecommendationSchema.parse({
       ...candidate.data,
       authority: "ai", contractVersion: RECOMMENDATION_CONTRACT_VERSION,
+      reportId: recommendationId(candidate.data), architecture: null,
       aiValidated: false,
       generation: { model: composer.model, reasoningEffort: MAXIMUM_REASONING_EFFORT },
       review: { status: "not-requested" },
       recommendedOverlays: candidate.data.overlays.map(overlay => overlay.id),
       recommendationMode: mode, cacheHit: false,
-      mermaidDiagram: architectureFlowMermaid(candidate.data.highLevelFlow),
-      architectureDiagramPrompt: "Render the AI-authored architectureGraph exactly. Layout and icons are presentation only; do not infer or change nodes, edges, source permissions, services, or sizing.",
       agentTrace: [
         { agent: "Recommendation Composer", status: "passed", summary: "AI evaluated the use case and advisory draft and authored the recommendation.", details: [composer.model, `reasoning: ${MAXIMUM_REASONING_EFFORT} (maximum)`] },
-        { agent: "Output Contract", status: "passed", summary: "Report shape and graph references are valid. No deterministic architectural comparison was used.", details: [`contract-${RECOMMENDATION_CONTRACT_VERSION}`] },
+        { agent: "Output Contract", status: "passed", summary: "Recommendation structure is valid. Diagram construction is a separate background task.", details: [`contract-${RECOMMENDATION_CONTRACT_VERSION}`] },
         { agent: "Architecture Critic", status: "skipped", summary: "Independent AI review was not requested. It can be run separately.", details: [] }
       ]
     });
     retain(cache, key, report);
-    progress("complete", attempt, "The AI architecture is ready. You can optionally request an independent AI review.", { model: composer.model });
+    progress("complete", attempt, "Your recommendation is ready. Its architecture image will be built in the background.", { model: composer.model });
     return report;
   }
   throw new RecommendationFormatError(issues);
+}
+
+export async function buildRecommendationArchitecture(
+  report: AcceptedRecommendation,
+  options: Pick<TieBreakOptions, "signal" | "onProgress"> = {}
+): Promise<AcceptedRecommendation> {
+  if (!azureOpenAIEnabled()) throw new Error("AI architecture generation is disabled.");
+  const recommendation = recommendationContent(report);
+  if (report.reportId !== recommendationId(recommendation)) {
+    throw new RecommendationFormatError(["The recommendation identity does not match its content. Generate a fresh recommendation."]);
+  }
+  if (report.outcome !== "recommended") {
+    throw new RecommendationFormatError(["Clarify the recommendation before building its diagram."]);
+  }
+  const composer = aiRoleSettings("architecture");
+  const key = createHash("sha256").update(JSON.stringify({ reportId: report.reportId, composer, contract: RECOMMENDATION_CONTRACT_VERSION })).digest("hex");
+  const progress = progressReporter(options);
+  const cached = architectureCache.get(key);
+  if (cached) {
+    progress("complete", 0, "The architecture image is ready.", { cached: true });
+    return attachRecommendationArchitecture(report, structuredClone(cached));
+  }
+  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(RECOMMENDATION_TIMEOUT_MS)]);
+  let issues: string[] = [];
+  let previousCandidate: unknown;
+  for (let attempt = 1; attempt <= RECOMMENDATION_MAX_ATTEMPTS; attempt++) {
+    signal.throwIfAborted();
+    progress("diagram", attempt, "Building the architecture from your displayed recommendation.", { model: composer.model });
+    const raw = await requestAiJson("architecture", RECOMMENDATION_ARCHITECTURE_PROMPT, {
+      recommendation, previousCandidate, repairIssues: issues
+    }, { signal, responseSchema: ArchitectureOutputSchema, reasoningEffort: MAXIMUM_REASONING_EFFORT });
+    previousCandidate = raw;
+    const parsed = AiArchitectureSchema.safeParse(raw);
+    issues = parsed.success ? validateArchitectureServices(parsed.data, recommendation)
+      : parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`);
+    if (!parsed.success || issues.length) {
+      console.warn("[architecture] Visual contract needs repair", { attempt, issueCount: issues.length });
+      if (attempt < RECOMMENDATION_MAX_ATTEMPTS) progress("revising", attempt, "Correcting the diagram representation; your recommendation is unchanged.", { issues });
+      continue;
+    }
+    progress("layout", attempt, "Preparing the clean stacked layers and their connections.");
+    const view = approvedArchitectureView(parsed.data);
+    const iconPaths = [...new Set(view.layers.flatMap(layer => layer.nodes.flatMap(node => node.icon ? [node.icon] : [])))];
+    const icons = await Promise.all(iconPaths.map(async url => {
+      const bytes = await readFile(path.join(process.cwd(), "public", ...url.split("/").filter(Boolean)));
+      return [url, `data:image/svg+xml;base64,${bytes.toString("base64")}`] as const;
+    }));
+    signal.throwIfAborted();
+    progress("rendering", attempt, "Rendering the SVG with product icons and labelled integrations.");
+    const architecture = RecommendationArchitectureSchema.parse({
+      ...parsed.data, reportId: report.reportId,
+      id: createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex"),
+      svg: renderArchitectureViewSvg(view, new Map(icons)),
+      mermaid: architectureFlowMermaid(parsed.data.flow), model: composer.model
+    });
+    const result = attachRecommendationArchitecture(report, architecture);
+    retain(architectureCache, key, architecture);
+    progress("complete", attempt, "Architecture and SVG are ready. Your recommendation is unchanged.");
+    return result;
+  }
+  throw new RecommendationFormatError(issues, "The architecture image could not be completed. Your recommendation remains available.");
 }
 
 export async function reviewRecommendation(
@@ -179,7 +252,8 @@ export async function reviewRecommendation(
   const proposal = recommendationContent(report);
   const context = {
     useCase: input, inputOrigin: inputOrigin(input),
-    refinement: userNotes?.trim() || undefined, proposedRecommendation: proposal
+    refinement: userNotes?.trim() || undefined, proposedRecommendation: proposal,
+    architecture: report.architecture ? { graph: report.architecture.graph, flow: report.architecture.flow } : undefined
   };
   const key = createHash("sha256").update(JSON.stringify({ context, reviewer, contract: RECOMMENDATION_CONTRACT_VERSION })).digest("hex");
   let review = reviewCache.get(key);
@@ -201,13 +275,14 @@ export async function reviewRecommendation(
       status: passed ? "passed" : "issues-found",
       summary: judgment.summary,
       issues: passed ? [] : judgment.issues.length ? judgment.issues : [judgment.summary],
-      model: reviewer.model, reasoningEffort: reviewer.reasoningEffort
+      model: reviewer.model, reasoningEffort: reviewer.reasoningEffort,
+      scope: report.architecture ? "recommendation-and-architecture" : "recommendation",
+      architectureId: report.architecture?.id ?? null
     };
     retain(reviewCache, key, review);
   }
   const result = AcceptedRecommendationSchema.parse({
     ...report, review, aiValidated: review.status === "passed", cacheHit: cached,
-    mermaidDiagram: architectureFlowMermaid(proposal.highLevelFlow),
     agentTrace: [
       ...report.agentTrace.filter(item => item.agent !== "Architecture Critic"),
       {

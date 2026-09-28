@@ -3,7 +3,7 @@ import { AcceptedRecommendationSchema, type AcceptedRecommendation } from "./rec
 import { RECOMMENDATION_MAX_ATTEMPTS } from "./recommendation-policy";
 
 export const RecommendationProgressSchema = z.object({
-  stage: z.enum(["preparing", "architect", "handoff", "reviewing", "revising", "complete"]),
+  stage: z.enum(["preparing", "architect", "diagram", "layout", "rendering", "handoff", "reviewing", "revising", "complete"]),
   attempt: z.number().int().min(0).max(RECOMMENDATION_MAX_ATTEMPTS),
   elapsedMs: z.number().int().nonnegative(),
   message: z.string().min(1).max(600),

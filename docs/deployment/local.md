@@ -111,8 +111,10 @@ finished; its certificate and generated password are for local QA only.
 
 ## Timeouts and authentication refresh
 
-Generation makes one Sol call at maximum supported reasoning (`xhigh`). One
-format-repair attempt is permitted if bounds or graph references are invalid.
+Recommendation generation makes one Sol call at maximum supported reasoning
+(`xhigh`) and returns its text before drawing the architecture. A separate
+automatic request builds the architecture and SVG in the background. Each phase
+permits one format-repair attempt; image failure never invalidates the text.
 Each generation call has a five-minute limit; the complete generation budget
 is ten minutes including that possible repair, plus ten seconds for delivery.
 These are ceilings, not predicted durations. Optional review is a separate

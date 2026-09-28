@@ -249,7 +249,6 @@ export type ServiceSizing = {
   name: string;
   provider: "azure" | "microsoft-saas" | "external" | "logical";
   purpose: string;
-  nodeIds: string[];
   dev: string;
   test: string;
   prod: string;
@@ -304,7 +303,7 @@ export type ArchitectureDecision = {
   approvedSummary?: string;
   serviceSizing?: ServiceSizing[];
   sizingAssumptions?: string[];
-  highLevelFlow?: string[];
+  highLevelFlow?: import("./recommendation-contract").RecommendationFlow;
   basePatternId: string;
   basePatternName: string;
   overlays: ArchitectureOverlay[];
@@ -372,6 +371,8 @@ export type TieBreakResponse = {
   review?: import("./recommendation-contract").RecommendationReview;
   authority?: "ai";
   contractVersion?: number;
+  reportId?: string;
+  architecture?: import("./recommendation-contract").RecommendationArchitecture | null;
   confidence?: "high" | "medium" | "low";
   confidenceReason?: string;
   overlays?: ArchitectureOverlay[];
@@ -389,7 +390,7 @@ export type TieBreakResponse = {
   optionalAddOns?: string[];
   architectureLayers?: ArchitectureLayer[];
   endToEndFlow?: string[];
-  highLevelFlow?: string[];
+  highLevelFlow?: import("./recommendation-contract").RecommendationFlow;
   rationale?: string[];
   securityControls?: string[];
   zeroTrust?: ZeroTrustZone;

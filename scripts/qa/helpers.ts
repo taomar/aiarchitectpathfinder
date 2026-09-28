@@ -4,7 +4,9 @@ import path from "node:path";
 import JSZip from "jszip";
 import { z } from "zod";
 import { requestAiJson } from "../../lib/ai-runtime";
-import { AcceptedRecommendationSchema, recommendationDecision } from "../../lib/recommendation-contract";
+import { AcceptedRecommendationSchema, DecisionInputSchema, recommendationDecision } from "../../lib/recommendation-contract";
+import { normalizeDecisionInput } from "../../lib/adaptive-wizard";
+import { emptyInput } from "../../lib/types";
 import { buildMermaidDiagram } from "../../lib/pathfinder-category";
 import { isDeepStrictEqual } from "node:util";
 import { readRecommendationResponse } from "../../lib/recommendation-progress";
@@ -94,22 +96,25 @@ export async function login(page: Page, tours = false) {
     await page.route("**/api/tiebreak", async route => {
       if (route.request().method() !== "POST") return route.continue();
       const body = route.request().postDataJSON();
-      const recorded = records.find(item =>
-        isDeepStrictEqual(item.input, body.input) &&
-        (item.notes ?? "") === (body.userNotes ?? "") &&
-        item.report.recommendationMode === (body.recommendationMode ?? "fast")
-      );
+      const recorded = records.find(item => body.operation === "architecture"
+        ? item.report.reportId === body.previousRecommendation?.reportId && !!item.report.architecture
+        : isDeepStrictEqual(
+            normalizeDecisionInput({ ...emptyInput(), ...DecisionInputSchema.parse(item.input) }),
+            normalizeDecisionInput({ ...emptyInput(), ...DecisionInputSchema.parse(body.input) })
+          ) &&
+          (item.notes ?? "") === (body.userNotes ?? "") &&
+          item.report.recommendationMode === (body.recommendationMode ?? "fast"));
       if (!recorded) throw new Error("No matching successful live response exists for this renderer replay. Run this scenario live first.");
       const review = AcceptedRecommendationSchema.parse(recorded.report);
       const projected = recommendationDecision(review);
-      expect(buildMermaidDiagram(projected)).toBe(review.mermaidDiagram);
-      console.log("REPLAY recorded live report; re-rendering current diagrams and exports without another model composition.");
-      await route.fulfill({ json: review });
+      if (review.architecture) expect(buildMermaidDiagram(projected)).toBe(review.architecture.mermaid);
+      console.log(`REPLAY recorded live ${body.operation === "architecture" ? "architecture" : "recommendation with the same canonical wizard profile"}; no new model call.`);
+      await route.fulfill({ json: body.operation === "architecture" ? review : { ...review, architecture: null } });
     });
   }
 }
 
-export async function reviewAfter(page: Page, label: string, trigger: () => Promise<unknown>, directory: string): Promise<CapturedReview> {
+export async function reviewAfter(page: Page, label: string, trigger: () => Promise<unknown>, directory: string, operation: "generate" | "review" = "generate"): Promise<CapturedReview> {
   const started = Date.now();
   const { body, report } = await progress(label, async () => {
     type Capture = {
@@ -119,13 +124,14 @@ export async function reviewAfter(page: Page, label: string, trigger: () => Prom
     };
     // Chromium does not reliably retain long-lived streamed bodies for Network.getResponseBody.
     // Read a clone in the browser without replacing the application's response or making another request.
-    await page.evaluate(() => {
+    await page.evaluate(expectedOperation => {
       const capture: Capture = { original: window.fetch, wrapper: window.fetch };
       capture.wrapper = async (input, init) => {
         const response = await capture.original.call(window, input, init);
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-        if (method === "POST" && new URL(url, location.href).pathname === "/api/tiebreak") {
+        if (method === "POST" && new URL(url, location.href).pathname === "/api/tiebreak" &&
+            (JSON.parse(String(init?.body)).operation ?? "generate") === expectedOperation) {
           capture.result = response.clone().text().then(text => ({
             text, status: response.status, contentType: response.headers.get("content-type") ?? "application/json"
           }), error => ({ error: error instanceof Error ? error.message : String(error) }));
@@ -134,12 +140,13 @@ export async function reviewAfter(page: Page, label: string, trigger: () => Prom
       };
       Reflect.set(window, "__qaRecommendationCapture", capture);
       window.fetch = capture.wrapper;
-    });
+    }, operation);
     try {
       const [response] = await Promise.all([
         page.waitForResponse(response =>
           new URL(response.url()).pathname === "/api/tiebreak" &&
-          response.request().method() === "POST", { timeout: RECOMMENDATION_CLIENT_TIMEOUT_MS }),
+          response.request().method() === "POST" &&
+          (response.request().postDataJSON().operation ?? "generate") === operation, { timeout: RECOMMENDATION_CLIENT_TIMEOUT_MS }),
         trigger()
       ]);
       const body = z.object({
@@ -174,7 +181,7 @@ export async function reviewAfter(page: Page, label: string, trigger: () => Prom
 
 export async function captureDiagrams(page: Page, directory: string): Promise<OutputArtifact[]> {
   await page.getByRole("button", { name: /^Architecture\b/ }).click();
-  await page.getByRole("button", { name: "Generate architecture", exact: true }).click();
+  await expect(page.getByText("Architecture and image are ready", { exact: true })).toBeVisible({ timeout: RECOMMENDATION_CLIENT_TIMEOUT_MS });
   const diagram = page.getByRole("img", { name: /^Architecture diagram for/ });
   await expect(diagram.locator("svg")).toBeVisible();
   await expect(page.getByRole("link", { name: "Download SVG", exact: true })).toBeVisible();
@@ -234,7 +241,7 @@ export async function capturePowerPoint(page: Page, directory: string, name = "a
   }
   fs.writeFileSync(path.join(directory, name + ".text.json"), JSON.stringify(slides, null, 2));
   expect(slides.map(slide => slide.text).join("\n")).not.toMatch(/\bundefined\b|\[object Object\]/);
-  console.log(`PowerPoint contains ${slides.length} readable slides.`);
+  console.log(`PowerPoint contains ${slides.length} slides with extractable text.`);
   return { id: name, kind: "downloaded PowerPoint slide text", content: slides };
 }
 

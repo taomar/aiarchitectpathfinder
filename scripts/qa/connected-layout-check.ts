@@ -6,6 +6,7 @@ import { availableDiagramFocuses, buildArchitectureLayout, connectionStyle, type
 import { renderArchitectureViewSvg } from "../../lib/architecture-svg";
 import { recommendationDecision } from "../../lib/recommendation-contract";
 import { acceptedFixture } from "./recommendation-fixture";
+import { createStackedTemplate } from "../../lib/architecture-stack";
 
 function overlaps(a: DiagramBox, b: DiagramBox) {
   return a.x < b.x + b.width - 1 && a.x + a.width > b.x + 1 && a.y < b.y + b.height - 1 && a.y + a.height > b.y + 1;
@@ -71,7 +72,14 @@ for (const example of cases) {
         for (const [index, band] of bands.entries()) {
           assert.equal(band.x, bands[0].x);
           assert.equal(band.width, bands[0].width);
-          if (index) assert.ok(band.y > bands[index - 1].y + bands[index - 1].height, "Reference layers must be stacked vertically without overlap.");
+          if (index) assert.ok(band.y >= bands[index - 1].y + bands[index - 1].height, "Reference layers must be stacked vertically without overlap.");
+        }
+        assert.deepEqual(createStackedTemplate({ ...graph, connections: [] }).nodes, graph.nodes, "The clean layer template must be independent of the connections.");
+        if (example.id === "ai-authored-high-level-integration") {
+          const entry = graph.connections.find(connection => connection.edge.from === "web" && connection.edge.to === "backend");
+          assert.equal(entry?.points.length, 2, "Aligned components in consecutive layers need a direct connector, not a routing loop.");
+          const controls = graph.groups.find(group => group.id === "cross-cutting")!;
+          assert.ok(controls.height < graph.height / 2, "A single identity component must not stretch into a full-height rail.");
         }
       }
       for (const [index, connection] of graph.connections.entries()) {

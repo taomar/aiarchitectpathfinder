@@ -122,7 +122,7 @@ function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: Architectur
   const overview = sentence(reportUseCaseSummary(details.input, details.decision, details.tieBreak));
   const summaryLines = wrapSlideText(overview, 45);
   const coverSummary = summaryLines.length <= 4 ? summaryLines
-    : wrapSlideText(details.tieBreak?.highLevelFlow?.at(-1) || details.tieBreak?.useCaseTitle || "Proposed architecture", 45);
+    : wrapSlideText(details.tieBreak?.useCaseTitle || "Proposed architecture", 45);
   text(slide, coverSummary.join("\n"), 0.72, 4.42, 7.6, 1.42, 20, { color: C.muted });
   rect(pptx, slide, 0.7, 6.25, 7.65, 0.76, C.amberFill);
   text(slide, ARCHITECTURE_DISCLAIMER, 0.9, 6.37, 7.23, 0.54, 14.5, { color: C.amber, bold: true });
@@ -137,9 +137,14 @@ function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: Architectur
     const name = view.layers.find(layer => layer.id === group.layer)?.nodes[0]?.label ?? "Confirm the design";
     slide.addShape(pptx.ShapeType.line, { x: 9.63, y, w: 0.32, h: 0, line: { color: "5DC3F2", width: 2.5 } });
     text(slide, group.title, 10.07, y - 0.11, 2.45, 0.25, 12, { color: "ABCBE6" });
-    text(slide, wrapSlideText(name, 26).join("\n"), 10.07, y + 0.22, 2.5, 0.66, 18, { color: "FFFFFF", bold: true });
+    text(slide, wrapSlideText(name, 22).join("\n"), 10.07, y + 0.22, 2.5, 0.9, 18, { color: "FFFFFF", bold: true });
   });
-  if (details.tieBreak?.review) text(slide, recommendationReviewLabel(details.tieBreak.review), 9.57, 6.29, 3.05, 0.34, 11.5, { color: "C9DCEE" });
+  if (details.tieBreak?.review) {
+    const review = details.tieBreak.review;
+    const label = review.status === "passed" && review.scope === "recommendation"
+      ? "Text reviewed; diagram not reviewed" : recommendationReviewLabel(review);
+    text(slide, label, 9.57, 6.14, 3.05, 0.53, 11.5, { color: "C9DCEE" });
+  }
   text(slide, "Proposed design · review before implementation", 9.57, 6.71, 3.05, 0.45, 11.5, { color: "C9DCEE" });
 }
 
@@ -150,7 +155,7 @@ function addDecision(pptx: PptxGenJS, details: PowerPointDetails, view: Architec
   const rationale = sentence(details.decision.rationale[0] || details.decision.finalRecommendation);
   const rationaleLines = wrapSlideText(rationale, 45);
   const decisionRationale = rationaleLines.length <= 3 ? rationaleLines
-    : wrapSlideText(details.tieBreak?.highLevelFlow?.at(-1) || "Confirm the requirements before implementation.", 45);
+    : wrapSlideText("Confirm the requirements and source-access boundaries before implementation.", 45);
   text(slide, decisionRationale.join("\n"), 0.79, 3.95, 7.02, 1.45, 21, { color: C.ink });
   slide.addShape(pptx.ShapeType.line, { x: 8.57, y: 1.96, w: 0, h: 3.4, line: { color: C.line, width: 1 } });
   const facts = [
@@ -201,6 +206,12 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
   for (const group of graph.groups) {
     rect(pptx, slide, px(group.x), py(group.y), group.width * scale, group.height * scale, group.fill, graph.highLevel ? "6B8FAE" : "ADBECE");
     const stacked = graph.layoutStyle === "stacked";
+    if (group.labelRailWidth) {
+      rect(pptx, slide, px(group.x), py(group.y), group.labelRailWidth * scale, group.height * scale, "153B60");
+      text(slide, wrapSlideText(group.title, 20).join("\n"), px(group.x + 22), py(group.y + group.height / 2 - 20),
+        (group.labelRailWidth - 40) * scale, 48 * scale, font(18), { bold: true, color: "FFFFFF" });
+      continue;
+    }
     text(slide, group.title, px(group.x + (stacked ? 18 : 10)), py(group.y + (stacked ? 10 : 5)),
       (group.width - 36) * scale, (stacked ? 27 : 19) * scale, font(stacked ? 18 : 13), { bold: true, color: "274962" });
   }
@@ -226,14 +237,22 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
   for (const placed of graph.nodes) {
     const node = placed.node;
     const pending = node.state === "confirm" || !node.required;
-    if (graph.layoutStyle !== "stacked" || pending) rect(pptx, slide, px(placed.x), py(placed.y), placed.width * scale, placed.height * scale, "FFFFFF", pending ? "AF8025" : "B8C8D7");
+    if (!placed.reference && (graph.layoutStyle !== "stacked" || pending)) rect(pptx, slide, px(placed.x), py(placed.y), placed.width * scale, placed.height * scale, "FFFFFF", pending ? "AF8025" : "B8C8D7");
     const image = deckState.get(pptx)?.assets?.icons?.[node.id];
-    const iconSize = graph.highLevel ? 48 : 44;
-    if (image) slide.addImage({ data: image, x: px(placed.x + placed.width / 2 - iconSize / 2), y: py(placed.y + 16), w: iconSize * scale, h: iconSize * scale });
+    const iconSize = placed.reference ? placed.compact ? 34 : 44 : placed.compact ? 40 : graph.highLevel ? 48 : 44;
+    const iconX = placed.compact ? placed.x + 4 : placed.x + placed.width / 2 - iconSize / 2;
+    const iconY = placed.compact ? placed.y + (placed.height - iconSize) / 2 : placed.y + (placed.reference ? 0 : 16);
+    if (image) slide.addImage({ data: image, x: px(iconX), y: py(iconY), w: iconSize * scale, h: iconSize * scale });
     else {
-      const cx = placed.x + placed.width / 2;
-      const cy = placed.y + 38;
-      if (placed.glyph === "person") {
+      const cx = placed.compact ? iconX + iconSize / 2 : placed.x + placed.width / 2;
+      const cy = placed.compact || placed.reference ? iconY + iconSize / 2 : placed.y + 38;
+      if (placed.reference && placed.glyph === "window") {
+        slide.addShape(pptx.ShapeType.roundRect, { x: px(cx - 20), y: py(cy - 16), w: 40 * scale, h: 32 * scale, fill: { color: "F6F9FC" }, line: { color: "42617D", width: 1 } });
+        slide.addShape(pptx.ShapeType.line, { x: px(cx - 20), y: py(cy - 8), w: 40 * scale, h: 0, line: { color: "42617D", width: 0.8 } });
+      } else if (placed.reference && placed.glyph === "pipeline") {
+        slide.addShape(pptx.ShapeType.line, { x: px(cx - 20), y: py(cy), w: 40 * scale, h: 0, line: { color: "42617D", width: 1 } });
+        for (const offset of [-20, 8]) rect(pptx, slide, px(cx + offset), py(cy - 9), 12 * scale, 18 * scale, "E9F0F7", "42617D");
+      } else if (placed.glyph === "person") {
         slide.addShape(pptx.ShapeType.ellipse, { x: px(cx - 8), y: py(cy - 24), w: 16 * scale, h: 16 * scale, fill: { color: "E5F0F9" }, line: { color: "365875", width: 1 } });
         slide.addShape(pptx.ShapeType.roundRect, { x: px(cx - 16), y: py(cy - 3), w: 32 * scale, h: 30 * scale, fill: { color: "E5F0F9" }, line: { color: "365875", width: 1 } });
       } else if (placed.glyph === "phone") {
@@ -246,14 +265,28 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
         text(slide, symbol, px(cx - 25), py(cy - 18), 50 * scale, 35 * scale, font(13), { bold: true, align: "center", valign: "middle", color: "365875" });
       }
     }
-    text(slide, placed.labelLines.join("\n"), px(placed.x + 8), py(placed.y + (graph.highLevel ? 77 : 68)),
-      (placed.width - 16) * scale, placed.labelLines.length * (graph.highLevel ? 25 : 22) * scale,
-      font(graph.highLevel ? 18 : 16), { bold: true, align: "center" });
-    text(slide, placed.caption, px(placed.x + 5), py(placed.y + placed.height - 21), (placed.width - 10) * scale, 16 * scale, font(10), { color: pending ? C.amber : C.muted, align: "center" });
+    const textY = placed.compact ? placed.y + (placed.height - placed.labelLines.length * 24) / 2 : placed.y + (placed.reference ? 48 : graph.highLevel ? 77 : 68);
+    const textWidth = placed.reference && !placed.compact ? 252 : placed.width - (placed.compact ? 52 : 16);
+    const textX = placed.reference && !placed.compact ? placed.x + (placed.width - textWidth) / 2 : placed.x + (placed.compact ? 48 : 8);
+    text(slide, placed.labelLines.join("\n"), px(textX), py(textY),
+      textWidth * scale, placed.labelLines.length * (graph.highLevel ? 25 : 22) * scale,
+      font(graph.highLevel ? 18 : 16), { bold: true, align: placed.compact ? "left" : "center", wrap: false });
+    if (placed.caption) text(slide, placed.caption, px(placed.x + (placed.compact ? 48 : 5)),
+      py(placed.compact ? textY + placed.labelLines.length * 24 + 6 : placed.y + placed.height - 21),
+      (placed.width - (placed.compact ? 76 : 10)) * scale, 16 * scale, font(10),
+      { color: pending ? C.amber : C.muted, align: placed.compact ? "left" : "center" });
   }
   for (const connection of graph.connections) {
     if (graph.highLevel) {
       const label = connection.labelBox;
+      for (let index = 1; index < (connection.labelLeader?.length ?? 0); index++) {
+        const start = connection.labelLeader![index - 1], end = connection.labelLeader![index];
+        slide.addShape(pptx.ShapeType.line, {
+          x: px(Math.min(start.x, end.x)), y: py(Math.min(start.y, end.y)),
+          w: Math.max(0.001, Math.abs(end.x - start.x) * scale), h: Math.abs(end.y - start.y) * scale,
+          flipH: end.x < start.x, flipV: end.y < start.y, line: { color: connectionStyle(connection.edge.kind).color, width: 0.6 }
+        });
+      }
       rect(pptx, slide, px(label.x), py(label.y), label.width * scale, label.height * scale, "FFFFFF");
       text(slide, connection.labelLines.join("\n"), px(label.x), py(label.y + 4), label.width * scale,
         (label.height - 4) * scale, font(14), { align: "center", color: connectionStyle(connection.edge.kind).color });
@@ -340,6 +373,7 @@ function addFinalConditions(pptx: PptxGenJS, report: AcceptedRecommendation) {
 export function buildPowerPoint(pptx: PptxGenJS, details: PowerPointDetails, assets: PowerPointAssets) {
   if (!assets.logo.startsWith("data:image/png;base64,")) throw new Error("The Microsoft logo must be loaded before exporting.");
   const report = AcceptedRecommendationSchema.parse(details.tieBreak);
+  if (!report.architecture) throw new Error("The architecture image is still preparing. Export is available when it is ready.");
   const approved: PowerPointDetails = {
     ...details, decision: recommendationDecision(report), tieBreak: report,
     architectureSummary: report.proposedArchitectureSummary, solutionType: report.solutionType

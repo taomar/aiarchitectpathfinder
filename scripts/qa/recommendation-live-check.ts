@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EXAMPLES } from "../../lib/examples";
+import { normalizeDecisionInput } from "../../lib/adaptive-wizard";
+import { emptyInput } from "../../lib/types";
 import { decide } from "../../lib/decision-engine";
 import { prepareDecisionInputForRecommendation } from "../../lib/summary-intake";
-import { tieBreak } from "../../lib/azure-openai";
+import { tieBreak, buildRecommendationArchitecture } from "../../lib/azure-openai";
 import { AcceptedRecommendationSchema, recommendationDecision } from "../../lib/recommendation-contract";
 import { buildArchitectureView } from "../../lib/architecture-view";
 import assert from "node:assert/strict";
@@ -19,7 +21,7 @@ async function main() {
   if (!sample) throw new Error("Pass an existing synthetic example ID.");
   const settings = JSON.parse(fs.readFileSync(path.join(directory, "model-config.json"), "utf8")) as Record<string, string>;
   Object.assign(process.env, settings, { NODE_ENV: "production" });
-  const input = sample.input;
+  const input = normalizeDecisionInput({ ...emptyInput(), ...sample.input });
   const draft = decide(prepareDecisionInputForRecommendation(input));
   const started = Date.now();
   const output = path.join(directory, "ai-authority-live");
@@ -38,21 +40,31 @@ async function main() {
   console.log(`START live AI authority check: ${sample.id}`);
   const progress = setInterval(() => console.log(`WAIT AI composition/review: ${Math.round((Date.now() - started) / 1000)}s`), 15_000);
   try {
-    const report = AcceptedRecommendationSchema.parse(await tieBreak(input, draft, undefined, {
+    const initial = AcceptedRecommendationSchema.parse(await tieBreak(input, draft, undefined, {
       onProgress: event => console.log(`PHASE ${event.stage}, attempt ${event.attempt}, ${Math.round(event.elapsedMs / 1000)}s: ${event.message}`)
     }));
+    assert.equal(initial.architecture, null);
+    const recommendationReadyMs = Date.now() - started;
+    console.log(`RECOMMENDATION READY after ${Math.round(recommendationReadyMs / 1000)}s; starting the separate architecture call.`);
+    fs.writeFileSync(path.join(output, `${sample.id}-recommendation-first.json`), JSON.stringify({ input, report: initial, elapsedMs: recommendationReadyMs }, null, 2));
+    const report = await buildRecommendationArchitecture(initial, {
+      onProgress: event => console.log(`ARCHITECTURE ${event.stage}: ${event.message}`)
+    });
+    assert.ok(report.architecture);
+    assert.equal(report.reportId, initial.reportId);
     const presented = recommendationDecision(report);
     assert.equal(report.generation.reasoningEffort, "xhigh");
     assert.equal(report.review.status, "not-requested");
     assert.equal(report.aiValidated, false);
-    assert.deepEqual(buildArchitectureView(presented).edges, report.architectureGraph.edges);
+    assert.deepEqual(buildArchitectureView(presented).edges, report.architecture.graph.edges);
     assert.deepEqual(presented.recommendedStack, report.recommendedStack);
     fs.writeFileSync(path.join(output, `${sample.id}.json`), JSON.stringify({ input, report, elapsedMs: Date.now() - started }, null, 2));
     console.log(JSON.stringify({
       example: sample.id, authority: report.authority, outcome: report.outcome,
       initialDraft: draft.basePatternId, acceptedRoute: report.recommendedBasePatternId,
-      solution: report.solutionType, graphNodes: report.architectureGraph.nodes.length,
-      graphEdges: report.architectureGraph.edges.length, sizingRows: report.serviceSizing.length,
+      solution: report.solutionType, graphNodes: report.architecture.graph.nodes.length,
+      graphEdges: report.architecture.graph.edges.length, sizingRows: report.serviceSizing.length,
+      recommendationSeconds: Math.round(recommendationReadyMs / 1000),
       generation: report.generation, independentReview: report.review.status,
       changes: report.changesFromDraft, seconds: Math.round((Date.now() - started) / 1000)
     }, null, 2));
