@@ -449,7 +449,7 @@ export function selectedSecurityNames(i: DecisionInput): string[] {
   const map: Record<SecurityControl, string> = {
     entra_id: "Entra ID",
     entra_external_id: "Entra External ID",
-    rbac: "Azure RBAC",
+    rbac: "RBAC / authorization checks",
     rls_ols: "RLS / OLS",
     dlp: "DLP policies",
     audit: "Audit logging",

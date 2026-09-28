@@ -3,12 +3,15 @@ import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak } from "@/lib/azure-ope
 import { PathfinderApimError } from "@/lib/pathfinder-apim";
 import { decide } from "@/lib/decision-engine";
 import { prepareDecisionInputForRecommendation } from "@/lib/summary-intake";
-import { requireAppAccess } from "@/lib/app-auth";
+import { authMode, requireAppAccess } from "@/lib/app-auth";
 
 export async function GET(req: Request) {
   const denied = requireAppAccess(req);
   if (denied) return denied;
-  return NextResponse.json(azureOpenAIStatus());
+  return NextResponse.json({
+    ...azureOpenAIStatus(),
+    authRefreshEnabled: authMode() === "entra" && process.env.AUTH_TOKEN_REFRESH_ENABLED === "true"
+  });
 }
 
 export async function POST(req: Request) {

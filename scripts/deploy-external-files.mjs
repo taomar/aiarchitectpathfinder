@@ -12,6 +12,7 @@ export function distributableSource(root, source) {
   if (stat.isSymbolicLink()) throw new Error(`Distribution does not permit symlinks: ${path}`);
   if (/(^|\/)(\.git|\.azure|\.internal|\.serena|node_modules|\.next|\.env[^/]*)(\/|$)/i.test(path)) return false;
   if (stat.isDirectory()) return true;
+  if (path === "public/ms-icons/microsoft-logo.png") return true;
   return sourceExtensions.has(extname(path).toLowerCase()) ||
     path === ".gitignore" || path === "docs/deployment/env.example";
 }

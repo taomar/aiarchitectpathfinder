@@ -7,3 +7,7 @@ Sources:
 - Microsoft Entra Architecture Icons: https://learn.microsoft.com/entra/architecture/architecture-icons
 
 These icons are included only for architecture diagrams and documentation in accordance with the Microsoft icon terms on the source pages.
+
+The Microsoft logo used on suggested-architecture presentations is the unmodified
+Microsoft header asset from https://uhf.microsoft.com/images/microsoft/RE1Mu3b.png.
+It does not indicate Microsoft review or approval of the generated architecture.

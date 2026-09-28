@@ -32,12 +32,13 @@ writeFileSync(marker, "Generated external source snapshot. Review before publish
 const excludedScripts = new Set(["deploy.ps1", "deployment-regression-check.ps1", "dev-local.ps1"]);
 const selected = [
   "app", "components", "lib", "public", "scripts",
-  ".gitignore", "azure.yaml", "package.json", "package-lock.json",
+  ".gitignore", "azure.yaml", "package.json", "package-lock.json", "PRODUCT.md", "DESIGN.md",
+  "playwright.config.ts",
   "next.config.mjs", "postcss.config.js", "tailwind.config.ts", "tsconfig.json",
   "proxy.ts", "instrumentation.ts",
   "infra/main.bicep", "infra/main.bicepparam",
   "docs/deployment/README.md", "docs/deployment/simple.md",
-  "docs/deployment/entra.md", "docs/deployment/configuration.md",
+  "docs/deployment/entra.md", "docs/deployment/configuration.md", "docs/deployment/local.md", "docs/deployment/architecture-views.md",
   "docs/deployment/env.example"
 ];
 for (const item of selected) {
@@ -71,7 +72,7 @@ writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
 writeFileSync(resolve(output, ".env.example"), readFileSync(resolve(root, "docs/deployment/env.example")));
 writeFileSync(resolve(output, "README.md"),
   readFileSync(resolve(root, "docs/deployment/README.md"), "utf8")
-    .replace(/\]\((simple|entra|configuration)\.md/g, "](" + "docs/deployment/$1.md"));
+    .replace(/\]\((simple|entra|configuration|local|architecture-views)\.md/g, "](" + "docs/deployment/$1.md"));
 writeFileSync(resolve(output, "next-env.d.ts"),
   '/// <reference types="next" />\n/// <reference types="next/image-types/global" />\n');
 writeFileSync(resolve(output, ".gitignore"),

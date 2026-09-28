@@ -109,6 +109,18 @@ async function main() {
   const missing = structuredClone(base.report);
   missing.recommendedStack = [];
   assert.ok(architectureIssues(missing, base.decision).length > 0);
+  const withRecommendations = {
+    ...base.decision,
+    zeroTrust: { applicable: true, rationale: "Recommended safeguards; required controls are listed separately.", controls: ["Optional additional safeguard"] }
+  };
+  const withoutOptional = {
+    ...base.report,
+    zeroTrust: { applicable: true, rationale: "Evaluate additional safeguards for this workload.", controls: [] }
+  };
+  assert.deepEqual(architectureIssues(withoutOptional, withRecommendations), [],
+    "Optional safeguards must not be promoted into mandatory implementation requirements.");
+  assert.ok(architectureIssues({ ...withoutOptional, securityControls: [] }, withRecommendations).length > 0,
+    "Required security controls must still be preserved.");
   let reviews = 0;
   let generations = 0;
   reply = body => {

@@ -328,7 +328,7 @@ export function Wizard() {
     setFilterLoadingIds(ids);
     (async () => {
       try {
-        await Promise.all(
+        const results = await Promise.all(
           toFetch.map(async (question) => {
             const res = await fetch("/api/wizard-filter", {
               method: "POST",
@@ -339,12 +339,12 @@ export function Wizard() {
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error || "AI wizard assistance failed.");
             if (!Array.isArray(data?.eliminate)) throw new Error("AI wizard returned an invalid response.");
-            if (!cancelled && Array.isArray(data?.eliminate)) {
-              setEliminations((prev) => ({ ...prev, [question.id]: data.eliminate }));
-            }
+            return { id: question.id, eliminate: data.eliminate };
           })
         );
+        if (!cancelled) setEliminations(Object.fromEntries(results.map(result => [result.id, result.eliminate])));
       } catch (error) {
+        controller.abort();
         if (!cancelled) {
           console.error("[wizard-v7] AI assistance failed", error);
           setFilterError("AI assistance is unavailable for this step. All choices remain visible; review them or change an answer to retry.");

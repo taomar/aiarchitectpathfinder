@@ -61,7 +61,10 @@ export function normalizeArchitectureDecision(
   const layers = normalizeArchitectureLayers(decision.architectureLayers, input, decision);
   const security = layers.find((layer) => layer.layer === "Security")?.selections ?? [];
   const safeguards = recommendedSafeguards(decision, input);
-  const selectedNotRequired = selectedSecurityNotRequired(security, input);
+  const selectedNotRequired = selectedSecurityNotRequired([
+    ...security,
+    ...(layers.find(layer => layer.layer === "Integration")?.selections ?? [])
+  ], input);
   const optionalAddOns = uniqueClean([
     ...decision.optionalAddOns,
     ...(safeguards.length ? [`Recommended safeguards: ${safeguards.join("; ")}`] : []),
@@ -139,7 +142,7 @@ export function normalizeLayerSelections(
       next = normalizeIntegration(selections, input);
       break;
     case "Security":
-      next = normalizeSecurity(selections, input, decision);
+      next = normalizeSecurity(selections, input, decision).filter(value => !/api management|apim/i.test(value));
       break;
     case "Observability":
       next = normalizeObservability(selections, input, decision);

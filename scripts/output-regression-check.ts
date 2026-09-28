@@ -3,8 +3,9 @@ import React from "react";
 import PptxGenJS from "pptxgenjs";
 import JSZip from "jszip";
 import { decide } from "../lib/decision-engine";
-import { emptyInput, type Channel, type DecisionInput, type TieBreakResponse } from "../lib/types";
+import { emptyInput, type ArchitectureDecision, type Channel, type DecisionInput, type TieBreakResponse } from "../lib/types";
 import { EXAMPLES } from "../lib/examples";
+import { buildArchitectureView } from "../lib/architecture-view";
 import { prepareDecisionInputForRecommendation } from "../lib/summary-intake";
 import { isActionable, requiresOrchestration } from "../lib/rules";
 import { buildArchitectureSummary } from "../lib/architecture-summary";
@@ -85,6 +86,7 @@ function mockReportLifecycle(fetchResponse: typeof fetch, initialStates: any[] =
   const originalHooks = { useState: React.useState, useRef: React.useRef, useMemo: React.useMemo, useEffect: React.useEffect };
   const originalFetch = globalThis.fetch;
   const states = initialStates.slice();
+  states.splice(1, 0, false);
   const refs: Array<{ current: any }> = [];
   const effects: Array<() => void | (() => void)> = [];
   const cleanups: Array<() => void> = [];
@@ -157,6 +159,62 @@ check("all shipped examples generate valid, portable SVG markup", () => {
   }
 });
 
+check("service-flow diagrams connect every declared component and preserve model deployments", () => {
+  for (const item of EXAMPLES) {
+    const decision = decide(item.input);
+    const view = buildArchitectureView(decision, item.input);
+    const nodes = view.layers.flatMap(layer => layer.nodes);
+    const connected = new Set(view.edges.flatMap(edge => [edge.from, edge.to]));
+    if (nodes.length > 1) assert.deepEqual(nodes.filter(node => !connected.has(node.id)).map(node => node.id), [], item.id);
+    assert.ok(!view.edges.some(edge => nodes.find(node => node.id === edge.from)?.layer === "models" &&
+      ["data", "interfaces"].includes(nodes.find(node => node.id === edge.to)?.layer ?? "")));
+    if (decision.architectureLayers.find(layer => layer.layer === "AI Platform")?.selections.some(value => /Azure OpenAI/i.test(value))) {
+      assert.ok(nodes.some(node => /Azure OpenAI/i.test(node.label)), item.id);
+    }
+    if (decision.architectureLayers.find(layer => layer.layer === "Integration")?.selections.some(value => /document.*(?:ingestion|indexing)/i.test(value))) {
+      assert.ok(view.layers.find(layer => layer.id === "preparation")?.nodes.length, item.id);
+      assert.match(svgText(buildArchitectureSvg(decision, item.input, new Map())), /preparation/i, item.id);
+    }
+  }
+});
+
+check("diagram classification honors the owning layer rather than incidental words", () => {
+  const decision = decide(EXAMPLES[0].input);
+  const selected: Partial<Record<ArchitectureDecision["architectureLayers"][number]["layer"], string[]>> = {
+    "Runtime/Backend": ["Custom mobile backend / authorization-aware retrieval service"],
+    "Knowledge/Data": ["Read-only record data exposed through a governed API"],
+    "AI Platform": ["Evaluation, tracing, monitoring, and safety testing"],
+    "Analytics/Grounding": ["Authorization-filtered retrieval"],
+    Integration: ["Read-only record lookup API"]
+  };
+  decision.architectureLayers = decision.architectureLayers.map(layer => ({ ...layer, selections: selected[layer.layer] ?? layer.selections }));
+  const view = buildArchitectureView(decision);
+  assert.ok(view.layers.find(layer => layer.id === "runtime")!.nodes.some(node => node.id === "custom-backend"));
+  assert.ok(view.layers.find(layer => layer.id === "data")!.nodes.some(node => node.id === "business-api"));
+  assert.ok(!view.layers.find(layer => layer.id === "models")!.nodes.some(node => /evaluation|monitor/i.test(node.label)));
+  assert.ok(view.controls.security.some(control => /Authorization-filtered/i.test(control.label)));
+  assert.ok(view.layers.find(layer => layer.id === "interfaces")!.nodes.some(node => node.id === "governed-access"));
+});
+
+check("an API data source does not create an API delivery channel", () => {
+  for (const narrative of [
+    "External customers use a mobile app to read records through an existing business API.",
+    "Employees ask questions in Teams and the agent calls internal APIs."
+  ]) {
+    const input = prepareDecisionInputForRecommendation({ ...emptyInput(), summary: narrative, directTextRecommendation: true });
+    assert.ok(input.dataSources.includes("apis"));
+    assert.ok(!input.channels.includes("api"));
+  }
+  for (const narrative of [
+    "Developers consume our public API to ask read-only questions.",
+    "We provide an assistant through an API for partners.",
+    "Build an API-first assistant for developers."
+  ]) {
+    const input = prepareDecisionInputForRecommendation({ ...emptyInput(), summary: narrative, directTextRecommendation: true });
+    assert.ok(input.channels.includes("api"), narrative);
+  }
+});
+
 check("all supported channels have non-null diagram nodes", () => {
   const channels: Channel[] = ["m365_copilot", "teams", "m365", "web", "mobile", "portal", "api", "embedded", "multiple", "unknown"];
   for (const channel of channels) {
@@ -193,7 +251,8 @@ for (const intent of ["storage_only", "predefined_reports_apis"] as const) {
       assert.match(visual, /Governed Fabric/);
       const diagram = buildMermaidDiagram(decision);
       assert.doesNotMatch(diagram, /Fabric Data Agent|m0 --> k0/);
-      assert.match(diagram, /in\d+ --> k0/);
+      const view = buildArchitectureView(decision, input);
+      assert.ok(view.edges.some(edge => edge.from === "fabric-access" && edge.to === "warehouse"));
       assert.ok(reportDetailSections(input, decision).some((section) => section.items.includes(`fabricAnalyticsIntent: ${intent}`)));
     });
   }
@@ -218,7 +277,7 @@ check("analytics and legacy Fabric default retain their Data Agent", () => {
     const decision = decide(input);
     assert.match(summary(input), /Microsoft Fabric Data Agent/);
     assert.match(svgText(buildArchitectureSvg(decision, input, new Map())), /Microsoft Fabric Data Agent/);
-    assert.match(buildMermaidDiagram(decision), /analytics grounding/);
+    assert.ok(buildArchitectureView(decision, input).edges.some(edge => edge.from === "fabric-agent" && edge.to === "warehouse" && edge.kind === "query"));
   }
 });
 
@@ -281,10 +340,10 @@ check("operational and Fabric grounding edges preserve access semantics", () => 
   };
   const onPrem = buildMermaidDiagram(decide(input));
   assert.doesNotMatch(onPrem, /m\d+ --> k\d+/);
-  const finance = buildMermaidDiagram(decide(example("hybrid_fabric_scoring_finance")));
-  assert.match(finance, /analytics grounding/);
-  assert.doesNotMatch(finance, /document grounding/);
-  assert.match(finance, /in\d+ --> k2/);
+  const finance = buildArchitectureView(decide(example("hybrid_fabric_scoring_finance")));
+  assert.ok(finance.edges.some(edge => edge.from === "fabric-agent" && edge.kind === "query"));
+  assert.ok(!finance.edges.some(edge => edge.from === "native-knowledge" || edge.from === "search"));
+  assert.ok(finance.edges.some(edge => edge.from === "governed-access" && edge.to === "sql"));
 });
 
 check("Teams-only SQL lookup does not invent an API channel or document grounding", () => {
@@ -296,17 +355,13 @@ check("Teams-only SQL lookup does not invent an API channel or document groundin
   const decision = decide(input);
   assert.deepEqual(input.channels, ["teams"]);
   assert.deepEqual(input.dataSources, ["azure_sql"]);
-  const svg = buildArchitectureSvg(decision, input, new Map());
-  const titleIndex = svg.indexOf(">Channels</text>");
-  assert.ok(titleIndex >= 0);
-  const start = svg.lastIndexOf("<g><rect", titleIndex);
-  const nextColumn = svg.indexOf("<g><rect", start + 1);
-  const channelColumn = svgText(svg.slice(start, nextColumn < 0 ? undefined : nextColumn));
+  const view = buildArchitectureView(decision, input);
+  const channelColumn = view.layers.find(layer => layer.id === "channels")!.nodes.map(node => node.label).join("\n");
   assert.match(channelColumn, /Microsoft Teams/);
   assert.doesNotMatch(channelColumn, /\bAPI\b/);
   const flow = buildMermaidDiagram(decision);
   assert.doesNotMatch(flow, /document grounding|Azure AI Search|m\d+ --> k\d+/);
-  assert.match(flow, /in\d+ --> k0/);
+  assert.ok(view.edges.some(edge => edge.from === "governed-access" && edge.to === "sql"));
 });
 
 function coordinatedSqlInput(runtime: "copilot_studio" | "custom_backend" | "foundry_agent_service", behavior: "multi_agent" | "long_running_process", confirmed?: boolean): DecisionInput {
@@ -341,10 +396,11 @@ check("read-only coordination remains visible without granting SQL writes", () =
         assert.match(narrative, /no business writes are authorized/, context);
         assert.doesNotMatch(narrative, /SQL writes use|All writes to|Controlled SQL write/i, context);
         const flow = buildMermaidDiagram(decision);
-        assert.match(flow, /subgraph O\["Orchestration"\]/, context);
+        const view = buildArchitectureView(decision, input);
+        assert.ok(view.layers.find(layer => layer.id === "runtime")!.nodes.some(node => node.sourceLabels.some(value => /coordination|orchestration|framework|long.running|durable|logic apps|power automate/i.test(value))), context);
         assert.match(flow, /read-only/, context);
         const visual = svgText(buildArchitectureSvg(decision, input, new Map()));
-        assert.match(visual, /Coordination|Durable Functions|Logic Apps|Power Automate/, context);
+        assert.match(visual, /coordination|Durable Functions|Logic Apps|Power Automate/i, context);
         assert.match(visual, /read-only/, context);
         if (orchestration?.selections.some((selection) => /Agent Framework/i.test(selection))) {
           assert.match(narrative, /Agent Framework/, context);
@@ -413,6 +469,33 @@ check("AI presentation cannot downgrade deterministic required controls", () => 
     ],
     zeroTrust: { applicable: false, controls: ["A supplemental safeguard"], rationale: "Supplementary guidance" }
   });
+
+  check("Copilot Studio authorization is not mislabeled as Azure resource RBAC", () => {
+    for (const dataSources of [["sharepoint"], ["documents"], ["azure_sql"], ["dataverse"]] as const) {
+      const input: DecisionInput = {
+        ...example("copilot_hr_policy_teams"),
+        dataSources: [...dataSources],
+        securityControls: ["entra_id", "rbac", "audit"]
+      };
+      const decision = decide(input);
+      assert.equal(decision.basePatternId, "copilot_studio_internal_assistant");
+      assert.ok(decision.recommendedStack.includes("RBAC / authorization checks"));
+      assert.ok(decision.architectureLayers.find(layer => layer.layer === "Security")?.selections.includes("RBAC / authorization checks"));
+      assert.ok(!decision.recommendedStack.includes("Azure RBAC"));
+    }
+  });
+
+  check("API Management has one consistent integration placement", () => {
+    for (const item of EXAMPLES) {
+      const decision = decide(item.input);
+      if (!decision.recommendedStack.some(value => /api management|apim/i.test(value))) continue;
+      const integration = decision.architectureLayers.find(layer => layer.layer === "Integration");
+      const security = decision.architectureLayers.find(layer => layer.layer === "Security");
+      assert.ok(integration?.selections.some(value => /api management|apim/i.test(value)), item.id);
+      assert.ok(!security?.selections.some(value => /api management|apim/i.test(value)), item.id);
+      assert.ok(!decision.optionalAddOns.some(value => /Selected but not required.*(?:api management|apim)/i.test(value)), item.id);
+    }
+  });
   const presented = withAiRecommendation(decision, review);
   for (const name of ["Security", "Integration"]) {
     const original = decision.architectureLayers.find((layer) => layer.layer === name)!;
@@ -441,7 +524,7 @@ check("actual report handlers preserve notes, clear old errors and reject AI dia
   const review = reviewFor(decision, { mermaidDiagram: 'flowchart LR\n BAD["UNCHECKED_DIAGRAM_MARKER"]' });
   const originalHooks = { useState: React.useState, useRef: React.useRef, useMemo: React.useMemo, useEffect: React.useEffect };
   const originalFetch = globalThis.fetch;
-  const states: any[] = [true, null, "Previous initial review failed"];
+  const states: any[] = [true, false, null, "Previous initial review failed"];
   const refs: Array<{ current: any }> = [];
   const requests: Array<{ recommendationMode: string; userNotes?: string }> = [];
   let stateIndex = 0;
@@ -549,7 +632,7 @@ check("baseline and exports remain usable while capability is pending or disable
     assert.match(reportComponent(nodes, "MermaidDiagram").props.code, /^flowchart LR/);
     reportButton(nodes, "Overview").props.onClick();
     capability.resolve(jsonResponse({ enabled: false }));
-    await settleUntil(() => harness.states[0] === false && harness.states[3] === false);
+    await settleUntil(() => harness.states[0] === false && harness.states[4] === false);
     nodes = harness.render();
     assertUsableBaseline(nodes, harness.decision);
     assert.equal(nodes.some((node) => node.type === "button" && /Apply refinement|Deep validate/.test(reportText(node))), false);
@@ -572,7 +655,7 @@ check("capability-check failure never launches a model request or hides the base
   });
   try {
     harness.mount();
-    await settleUntil(() => harness.states[0] === false && harness.states[3] === false);
+    await settleUntil(() => harness.states[0] === false && harness.states[4] === false);
     const nodes = harness.render();
     assertUsableBaseline(nodes, harness.decision);
     assert.deepEqual(methods, ["GET"]);
@@ -603,7 +686,7 @@ check("enabled background review does not gate results and a disabled response i
     assert.deepEqual(reportComponent(harness.render(), "ArchitectureLayerTable").props.layers, harness.decision.architectureLayers);
     reportButton(harness.render(), "Overview").props.onClick();
     model.resolve(jsonResponse({ error: "Pathfinder APIM is not enabled.", status: { enabled: false } }, 400));
-    await settleUntil(() => harness.states[0] === false && harness.states[3] === false);
+    await settleUntil(() => harness.states[0] === false && harness.states[4] === false);
     nodes = harness.render();
     assertUsableBaseline(nodes, harness.decision);
     assert.match(reportComponent(nodes, "AgentPipelinePanel").props.error, /AI review is disabled/);
@@ -638,7 +721,7 @@ check("a successful optional initial review enriches the already-usable baseline
       securityControls: harness.decision.securityControls
     });
     model.resolve(jsonResponse(review));
-    await settleUntil(() => !!harness.states[1] && harness.states[3] === false);
+    await settleUntil(() => !!harness.states[2] && harness.states[4] === false);
     const nodes = harness.render();
     assertUsableBaseline(nodes, harness.decision);
     assert.match(reportText(nodes), /COMPLETED_OPTIONAL_REVIEW_MARKER/);
@@ -754,7 +837,7 @@ check("real PPTX appendix preserves every condition, question, control and narra
   const slideNames = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name));
   const textFor = async (name: string) => [...(await zip.file(name)!.async("string")).matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
     .map((match) => match[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")).join("\n");
-  const fullText = (await Promise.all(slideNames.map(textFor))).join("\n");
+  const fullText = (await Promise.all(slideNames.map(textFor))).join("\n").replace(/\s+/g, " ");
   for (const marker of [...markers, ...review.assumptions, "MISSING_QUESTION_MARKER", "FOLLOWUP_QUESTION_MARKER", "AI_EXCLUSION_MARKER", "CHECK_DETAIL_MARKER", "ACCEPTED_REFINEMENT_MARKER", "SECOND_NARRATIVE_MARKER", "THIRD_NARRATIVE_MARKER"]) {
     assert.ok(fullText.includes(marker), `${marker} must survive actual PPTX serialization`);
   }
@@ -763,7 +846,7 @@ check("real PPTX appendix preserves every condition, question, control and narra
   const blueprint = await textFor("ppt/slides/slide1.xml");
   assert.doesNotMatch(blueprint, /Not required for this use case/);
   assert.doesNotMatch(blueprint, /\+ 1 more item\b/);
-  assert.match(blueprint, /\+ \d{2} more items/);
+  assert.doesNotMatch(blueprint, /\+ \d+ more items/);
 });
 
 check("read-only coordination survives actual PPTX export without a write-path narrative", async () => {
@@ -805,7 +888,7 @@ check("Fabric channel feasibility warning remains in report exports without forc
   const slideNames = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name));
   const texts = await Promise.all(slideNames.map(async (name) =>
     [...(await zip.file(name)!.async("string")).matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match) => match[1]).join("\n")));
-  assert.ok(texts.join("\n").includes(warning));
+  assert.ok(texts.join("\n").replace(/\s+/g, " ").includes(warning.replace(/\s+/g, " ")));
 });
 
 async function main() {

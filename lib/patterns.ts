@@ -492,7 +492,7 @@ export const PATTERNS: Record<string, BasePattern> = {
       if (hasOperational) {
         stack.push(hasSql ? "Least-privilege SQL permissions" : "Least-privilege data-source permissions");
       }
-      if (input.securityControls.includes("rbac")) stack.push("Azure RBAC");
+      if (input.securityControls.includes("rbac")) stack.push("RBAC / authorization checks");
       if (input.securityControls.includes("audit")) stack.push("Audit logging");
 
       // ---- Security selections ----
@@ -504,7 +504,7 @@ export const PATTERNS: Record<string, BasePattern> = {
           "Read-only connector/action/API permissions"
         );
       }
-      if (input.securityControls.includes("rbac")) security.push("Azure RBAC");
+      if (input.securityControls.includes("rbac")) security.push("RBAC / authorization checks");
       if (input.securityControls.includes("audit")) security.push("Audit logging");
       if (input.securityControls.includes("key_vault")) security.push("Key Vault");
       if (input.securityControls.includes("managed_identity")) security.push("Managed Identity");

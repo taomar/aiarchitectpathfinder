@@ -111,7 +111,10 @@ function inferChannels(text: string, users: UserType[]): Channel[] {
   if (has(text, /\bwebsite\b|\bweb\s?app\b|\bwebapp\b|\bchatbot\b|\bpublic page\b/i) || (!webSearchGrounding && has(text, /\bweb\b/i))) add(channels, "web");
   if (has(text, /\bmobile\b|\bios\b|\bandroid\b/i)) add(channels, "mobile");
   if (has(text, /\bportal\b/i)) add(channels, "portal");
-  if (has(text, /\bapi\b|\bapis\b/i)) add(channels, "api");
+  const apiDelivery = hasUnnegated(text, /\bapi[-\s]+(?:first|only|channel|experience)\b/i) ||
+    hasUnnegated(text, /\b(?:expose|publish|offer|serve|deliver|provide)\b[^.;\n]{0,60}\b(?:as|via|through|over)\s+(?:an?\s+|the\s+)?(?:rest\s+)?apis?\b/i) ||
+    hasUnnegated(text, /\b(?:users|developers|partners|clients|consumers)\s+(?:(?:will|can|should)\s+)?(?:call|consume|access|integrate with)\s+(?:(?:the|our|an?)\s+)?(?:(?:public|external|rest|agent)\s+)?apis?\b/i);
+  if (apiDelivery) add(channels, "api");
   if (has(text, /\bembedded\b|\bembed\b|\bin another app\b/i)) add(channels, "embedded");
 
   if (channels.length === 0 && users.some((user) => ["external_customers", "citizens", "partners"].includes(user))) {

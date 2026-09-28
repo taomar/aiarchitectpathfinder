@@ -812,7 +812,8 @@ const confirmedExternal = expectBase("confirmed external channel", {
   externalAccessConfirmed: true
 }, "external_ai_app");
 assertLayerIncludes("confirmed external channel", confirmedExternal, "Identity", "Entra External ID");
-assertLayerIncludes("confirmed external channel", confirmedExternal, "Security", "API Management");
+assertLayerIncludes("confirmed external channel", confirmedExternal, "Integration", "API Management");
+assertLayerExcludes("confirmed external channel", confirmedExternal, "Security", "API Management");
 assertLayerIncludes("confirmed external channel", confirmedExternal, "Security", "Front Door / WAF");
 
 const foundryFineTuneInput: DecisionInput = {
@@ -1279,7 +1280,8 @@ assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric,
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Integration", "Fabric Data Agent connection");
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "Entra External ID");
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "RBAC / authorization checks");
-assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "API Management (APIM)");
+assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Integration", "API Management (APIM)");
+assertLayerExcludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "API Management (APIM)");
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "Managed Identity");
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "Key Vault");
 assertLayerIncludes("external citizen mobile Fabric Q&A", externalCitizenFabric, "Security", "Front Door / WAF");

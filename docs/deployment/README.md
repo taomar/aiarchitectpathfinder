@@ -13,6 +13,8 @@ Two authentication profiles use the same Linux App Service deployment:
 | [Password-protected deployment](simple.md) | Controlled sharing with a generated shared password. |
 | [Microsoft Entra deployment](entra.md) | Named users and business guests assigned to your existing enterprise application. |
 | [Configuration reference](configuration.md) | Exact inputs, resource boundary, AI access, and operational limitations. |
+| [Run and test locally](local.md) | Loopback development, existing model access, and browser QA. |
+| [Architecture views and PowerPoint](architecture-views.md) | Repeatable layers, editable slides, and review requirements. |
 
 The Bicep deployment creates one Web App and, by default, one single-instance
 Linux B1 App Service plan. You can instead reference an existing compatible plan.
@@ -42,10 +44,11 @@ running `azd up`; missing prerequisites stop deployment.
 ```powershell
 npm ci
 Copy-Item .env.example .env.local
-npm run dev
+npm run dev -- --hostname 127.0.0.1
 ```
 
-Local unauthenticated mode is permitted only outside production and only on
+Open `http://127.0.0.1:3000`. See [the local guide](local.md) for model configuration
+and the separate HTTPS/password QA workflow. Local unauthenticated mode is permitted only outside production and only on
 loopback hosts. For deployed environments, `AUTH_MODE` must be `password` or
 `entra`; missing or invalid settings fail closed.
 

@@ -27,6 +27,7 @@ import {
 } from "@/lib/usage-client";
 import { readJsonResponse } from "@/lib/api-response";
 import { reportUseCaseSummary } from "@/lib/export";
+import { RECOMMENDATION_CLIENT_TIMEOUT_MS } from "@/lib/recommendation-policy";
 
 const layerOrder: ArchitectureLayer["layer"][] = [
   "User/Channel",
@@ -311,7 +312,7 @@ const aiReviewFetchDefaults: RequestInit = {
   cache: "no-store"
 };
 
-export async function readAiReviewAvailability(signal?: AbortSignal): Promise<boolean> {
+export async function readAiReviewAvailability(signal?: AbortSignal, onAuthRefreshPolicy?: (enabled: boolean) => void): Promise<boolean> {
   const response = await fetch("/api/tiebreak", {
     ...aiReviewFetchDefaults,
     method: "GET",
@@ -322,27 +323,22 @@ export async function readAiReviewAvailability(signal?: AbortSignal): Promise<bo
   if (!response.ok || !status || typeof status !== "object" || !("enabled" in status) || typeof status.enabled !== "boolean") {
     throw new Error("Optional AI availability could not be checked. Reload to retry; the rules-based recommendation remains available.");
   }
+  onAuthRefreshPolicy?.("authRefreshEnabled" in status && status.authRefreshEnabled === true);
   return status.enabled;
 }
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-// Client enrichment budgets do not block use of the deterministic recommendation.
-const INITIAL_AI_FIRST_ATTEMPT_TIMEOUT_MS = 115_000;
-const INITIAL_AI_RETRY_TIMEOUT_MS = 45_000;
-
-// EasyAuth session keep-alive. The SPA never does a top-level navigation after the
-// first load, so the Entra access token (~60-90 min) can lapse while the 8h cookie is
-// still valid. A background POST /api/tiebreak then gets a 302 to the login page, which
-// a fetch() cannot follow cross-origin and surfaces as "Failed to fetch" — the page
-// then strands on the deterministic draft until a manual refresh. Calling /.auth/refresh
-// renews the token from the EasyAuth token store (requires offline_access on the server)
-// so background calls keep working without a refresh.
-async function refreshAuthSession(): Promise<void> {
+// Refresh is available only when the host explicitly enables an Entra token store.
+async function refreshAuthSession(enabled: boolean): Promise<boolean> {
+  if (!enabled) return false;
   try {
-    await fetch("/.auth/refresh", { credentials: "include", cache: "no-store" });
-  } catch {
-    /* best-effort; ignore */
+    const response = await fetch("/.auth/refresh", {
+      credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10_000)
+    });
+    if (!response.ok) console.warn("[auth] Session refresh rejected:", response.status);
+    return response.ok;
+  } catch (error) {
+    console.warn("[auth] Session refresh unavailable:", error instanceof Error ? error.message : String(error));
+    return false;
   }
 }
 
@@ -350,7 +346,7 @@ async function refreshAuthSession(): Promise<void> {
 // 302-to-login redirect that the SPA cannot follow — treat it as auth-recoverable.
 function isLikelyAuthFetchFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return /failed to fetch|networkerror|load failed|the ai review timed out/i.test(message);
+  return /failed to fetch|networkerror|load failed/i.test(message);
 }
 
 function isAiReviewAuthError(message: string) {
@@ -519,6 +515,7 @@ export function FinalRecommendation({
   onReset: () => void;
 }) {
   const [aoaiEnabled, setAoaiEnabled] = useState<boolean | null>(null);
+  const [canRefreshAuth, setCanRefreshAuth] = useState(false);
   const [tieBreakResult, setTieBreakResult] = useState<TieBreakResponse | null>(null);
   const [tieBreakError, setTieBreakError] = useState<string | null>(null);
   const [tieBreakLoading, setTieBreakLoading] = useState(false);
@@ -594,26 +591,28 @@ export function FinalRecommendation({
   const lastAppliedSeqRef = useRef(0);
 
   async function requestRecommendation(mode: "fast" | "deep", notes?: string, signal?: AbortSignal): Promise<TieBreakResponse> {
-    const res = await fetch("/api/tiebreak", {
-      ...aiReviewFetchDefaults,
-      method: "POST",
-      headers: { "Accept": "application/json", "Content-Type": "application/json" },
-      // Only the input is sent. The server re-derives the deterministic decision via
-      // decide(input); sending the large server-generated decision blob previously
-      // tripped the upstream WAF's SQL-injection rules (its architecture prose
-      // contains SQL/database wording) and got the request blocked with a 403 before
-      // it reached the API — which surfaced to the user as a deterministic fallback.
-      body: JSON.stringify({ input, userNotes: notes, recommendationMode: mode }),
-      signal
-    });
-    const data = await readJsonResponse<Partial<TieBreakResponse> & { error?: string; correlationId?: string; status?: { enabled?: boolean } | number }>(res, "AI review");
-    if (!res.ok) {
-      const reference = data?.correlationId ? ` Reference: ${data.correlationId}` : "";
-      const error = new Error(`${data?.error || "Recommendation generation failed"}${reference}`);
-      if (typeof data.status === "object" && data.status?.enabled === false) error.name = "AiReviewDisabledError";
-      throw error;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new DOMException("The AI review timed out.", "TimeoutError")), RECOMMENDATION_CLIENT_TIMEOUT_MS);
+    try {
+      const res = await fetch("/api/tiebreak", {
+        ...aiReviewFetchDefaults,
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        // Send only user input; the server owns routing and guardrail calculation.
+        body: JSON.stringify({ input, userNotes: notes, recommendationMode: mode }),
+        signal: signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal
+      });
+      const data = await readJsonResponse<Partial<TieBreakResponse> & { error?: string; correlationId?: string; status?: { enabled?: boolean } | number }>(res, "AI review");
+      if (!res.ok) {
+        const reference = data?.correlationId ? ` Reference: ${data.correlationId}` : "";
+        const error = new Error(`${data?.error || "Recommendation generation failed"}${reference}`);
+        if (typeof data.status === "object" && data.status?.enabled === false) error.name = "AiReviewDisabledError";
+        throw error;
+      }
+      return data as TieBreakResponse;
+    } finally {
+      clearTimeout(timer);
     }
-    return data as TieBreakResponse;
   }
 
   // Creates an AbortController registered in the shared set so a navigation-away
@@ -658,7 +657,7 @@ export function FinalRecommendation({
       // the token and retry once before surfacing an error to the user.
       if (isLikelyAuthFetchFailure(e)) {
         try {
-          await refreshAuthSession();
+          if (!await refreshAuthSession(canRefreshAuth)) throw e;
           const data = await requestRecommendation("fast", notes, controller.signal);
           if (controller.signal.aborted || seq < lastAppliedSeqRef.current) return;
           lastAppliedSeqRef.current = seq;
@@ -735,11 +734,11 @@ export function FinalRecommendation({
   // session never silently 302s a background /api/tiebreak call. Runs on mount, every
   // 20 minutes, and whenever the tab regains focus.
   useEffect(() => {
-    if (aoaiEnabled !== true) return;
-    refreshAuthSession();
-    const interval = setInterval(refreshAuthSession, 20 * 60 * 1000);
+    if (aoaiEnabled !== true || !canRefreshAuth) return;
+    void refreshAuthSession(true);
+    const interval = setInterval(() => void refreshAuthSession(true), 20 * 60 * 1000);
     const onVisible = () => {
-      if (document.visibilityState === "visible") refreshAuthSession();
+      if (document.visibilityState === "visible") void refreshAuthSession(true);
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -748,26 +747,25 @@ export function FinalRecommendation({
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [aoaiEnabled]);
+  }, [aoaiEnabled, canRefreshAuth]);
 
   useEffect(() => {
     let cancelled = false;
     let activeController: AbortController | null = null;
+    let authRefreshEnabled = false;
     // This initial load is the first AI-review request. A refinement / deep
     // validation the user triggers later takes a higher id, so the guards below
     // stop a slow initial load (or its retry) from landing late and overwriting an
     // already-applied refinement.
     const loadSeq = ++requestSeqRef.current;
 
-    const runOnce = async (timeoutMs: number) => {
+    const runOnce = async () => {
       const controller = new AbortController();
       activeController = controller;
       pendingControllersRef.current.add(controller);
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         return await requestRecommendation("fast", undefined, controller.signal);
       } finally {
-        clearTimeout(timer);
         pendingControllersRef.current.delete(controller);
       }
     };
@@ -782,7 +780,10 @@ export function FinalRecommendation({
         const timer = setTimeout(() => controller.abort(), 10_000);
         let enabled: boolean;
         try {
-          enabled = await readAiReviewAvailability(controller.signal);
+          enabled = await readAiReviewAvailability(controller.signal, (value) => {
+            authRefreshEnabled = value;
+            if (!cancelled) setCanRefreshAuth(value);
+          });
         } finally {
           clearTimeout(timer);
           pendingControllersRef.current.delete(controller);
@@ -801,7 +802,7 @@ export function FinalRecommendation({
         return;
       }
       try {
-        const data = await runOnce(INITIAL_AI_FIRST_ATTEMPT_TIMEOUT_MS);
+        const data = await runOnce();
         if (cancelled || loadSeq < lastAppliedSeqRef.current) return;
         lastAppliedSeqRef.current = loadSeq;
         setTieBreakResult(data);
@@ -814,14 +815,12 @@ export function FinalRecommendation({
           setTieBreakError(aiReviewErrorMessage(error));
           return;
         }
-        // The first attempt failed. If it looks like an expired EasyAuth session
-        // (network/"Failed to fetch") refresh the token before retrying; otherwise the
-        // identical payload hits the server cache and returns almost instantly.
+        // The server owns transport and report-repair retries. Reissue the whole
+        // workflow only after a supported sign-in refresh actually succeeds.
         try {
-          await refreshAuthSession();
-          await delay(2_000);
+          if (!isLikelyAuthFetchFailure(error) || !await refreshAuthSession(authRefreshEnabled)) throw error;
           if (cancelled || loadSeq < lastAppliedSeqRef.current) return;
-          const data = await runOnce(INITIAL_AI_RETRY_TIMEOUT_MS);
+          const data = await runOnce();
           if (cancelled || loadSeq < lastAppliedSeqRef.current) return;
           lastAppliedSeqRef.current = loadSeq;
           setTieBreakResult(data);
@@ -1373,9 +1372,9 @@ export function FinalRecommendation({
       <section className="card rounded-xl">
         <div className="flex flex-wrap items-center justify-between gap-3" data-coach="rec-architecture">
           <div>
-            <h2 className="text-base font-semibold">Architecture diagram</h2>
+            <h2 className="text-base font-semibold">Repeatable layered architecture</h2>
             <p className="mt-0.5 text-xs text-gray-500">
-              Generate this diagram after the recommendation is ready. It is rendered from the final architecture using Microsoft service icon assets.
+              A fixed layer order, explicit source boundaries, and separate background preparation. The page, SVG, service flow, and PowerPoint use the same architecture model.
             </p>
           </div>
           <button
@@ -1432,8 +1431,7 @@ export function FinalRecommendation({
           <div>
             <h2 className="text-lg font-semibold">Service flow</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              Left-to-right: users → channel → runtime → models → agents/grounding → knowledge/data. Dotted lines are
-              cross-cutting concerns.
+              Concrete paths from the same model. Dashed confirmation paths are proposed decisions, not enabled access. Source permissions remain independent at each data boundary.
             </p>
           </div>
           {componentFlowLoading ? (
