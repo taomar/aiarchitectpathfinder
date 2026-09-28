@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse } from "@/lib/types";
 import { buildArchitectureSummary, shouldUseGeneratedArchitectureSummary } from "@/lib/architecture-summary";
 import { buildArchitectureView } from "@/lib/architecture-view";
+import { buildArchitectureLayout } from "@/lib/architecture-layout";
 import { displayPatternName } from "@/lib/pathfinder-category";
 import { reportUseCaseSummary } from "@/lib/export";
 import { buildPowerPoint, type PowerPointAssets } from "@/lib/powerpoint";
@@ -71,7 +72,8 @@ export function ExportPPTButton({
         : shouldUseGeneratedArchitectureSummary(tieBreak?.proposedArchitectureSummary, useCaseSummary, decision.finalRecommendation, solutionType)
           ? fallbackSummary : tieBreak?.proposedArchitectureSummary || fallbackSummary;
       const model = buildArchitectureView(decision, input);
-      const paths = [...new Set(model.layers.flatMap(layer => layer.nodes).flatMap(node => node.icon ? [node.icon] : []))];
+      const diagramNodes = buildArchitectureLayout(model).nodes.map(item => item.node);
+      const paths = [...new Set(diagramNodes.flatMap(node => node.icon ? [node.icon] : []))];
       const [logo, images] = await Promise.all([
         pngAsset("/ms-icons/microsoft-logo.png"),
         Promise.all(paths.map(async path => [path, await diagramIcon(path)] as const))
@@ -79,7 +81,7 @@ export function ExportPPTButton({
       const byPath = new Map(images);
       const assets: PowerPointAssets = {
         logo,
-        icons: Object.fromEntries(model.layers.flatMap(layer => layer.nodes)
+        icons: Object.fromEntries(diagramNodes
           .flatMap(node => node.icon && byPath.has(node.icon) ? [[node.id, byPath.get(node.icon)!]] : []))
       };
       const pptx = new PptxGenJS();

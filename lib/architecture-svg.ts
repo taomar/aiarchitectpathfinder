@@ -1,5 +1,6 @@
 import type { ArchitectureDecision, DecisionInput } from "./types";
-import { buildArchitectureView, type ArchitectureView, type ViewNode } from "./architecture-view";
+import { buildArchitectureView, type ArchitectureView } from "./architecture-view";
+import { buildArchitectureLayout, connectionStyle, DIAGRAM_LEGEND, type DiagramFocus } from "./architecture-layout";
 
 const xml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 export function wrapArchitectureText(value: string, width: number): string[] {
@@ -10,120 +11,126 @@ export function wrapArchitectureText(value: string, width: number): string[] {
   }
   return lines.length ? lines : [""];
 }
+const lineText = (lines: string[], x: number, y: number, size: number, color = "#18344F", bold = false, anchor = "start") =>
+  lines.map((line, i) => `<text x="${x}" y="${y + i * size * 1.35}" text-anchor="${anchor}" font-family="Segoe UI,Arial,sans-serif" font-size="${size}" font-weight="${bold ? 600 : 400}" fill="${color}">${xml(line)}</text>`).join("");
 
-function text(lines: string[], x: number, y: number, size: number, color = "#172C45", bold = false, lineHeight = size * 1.3) {
-  return lines.map((line, index) => `<text x="${x}" y="${y + index * lineHeight}" font-family="Segoe UI,Arial,sans-serif" font-size="${size}" font-weight="${bold ? 600 : 400}" fill="${color}">${xml(line)}</text>`).join("");
-}
-
-function nodeHeight(node: ViewNode) {
-  return Math.max(116, 58 + wrapArchitectureText(node.label, 27).length * 27 + 30);
-}
-
-export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<string, string | null>) {
-  const width = 1520;
-  const margin = 44;
-  const labelWidth = 245;
-  const contentX = margin + labelWidth;
-  const contentWidth = width - margin - contentX;
-  const gap = 16;
-  const cardWidth = (contentWidth - gap * 2) / 3;
-  const parts: string[] = [];
-  const title = wrapArchitectureText(view.title, 62);
-  parts.push(text(title, margin, 55, 32, "#11263F", true, 38));
-  let y = 68 + title.length * 38;
-  parts.push(text([view.actionBoundary + ". The same layers and boundaries in every view."], margin, y, 18, "#52657C"));
-  y += 30;
-  parts.push(`<rect x="${margin}" y="${y}" width="${width - margin * 2}" height="42" rx="5" fill="#FFF5DC"/>`);
-  parts.push(text([view.disclaimer], margin + 16, y + 27, 17, "#705011", true));
-  y += 76;
-  for (const [index, layer] of view.layers.entries()) {
-    const rows: ViewNode[][] = [];
-    for (let i = 0; i < layer.nodes.length; i += 3) rows.push(layer.nodes.slice(i, i + 3));
-    const heights = rows.map(row => Math.max(...row.map(nodeHeight)));
-    const height = layer.nodes.length ? heights.reduce((sum, value) => sum + value, 0) + Math.max(0, rows.length - 1) * gap : 62;
-    parts.push(`<line x1="${margin}" y1="${y - 14}" x2="${width - margin}" y2="${y - 14}" stroke="#D7E1EC"/>`);
-    parts.push(text([String(index + 1).padStart(2, "0")], margin, y + 22, 14, "#0078D4", true));
-    parts.push(text(wrapArchitectureText(layer.title, 21), margin + 35, y + 22, 20, "#172C45", true, 26));
-    const descriptionY = y + 38 + wrapArchitectureText(layer.title, 21).length * 26;
-    parts.push(text(wrapArchitectureText(layer.description, 29), margin + 35, descriptionY, 14, "#52657C", false, 19));
-    if (!layer.nodes.length) parts.push(text(["No separate component selected"], contentX + 18, y + 32, 17, "#697B8D"));
-    let rowY = y;
-    rows.forEach((row, rowIndex) => {
-      row.forEach((node, column) => {
-        const x = contentX + column * (cardWidth + gap);
-        const height = heights[rowIndex];
-        const pending = node.state === "confirm";
-        const fill = pending ? "#FFF9EC" : "#F5F8FC";
-        parts.push(`<g data-component-id="${xml(node.id)}"><rect x="${x}" y="${rowY}" width="${cardWidth}" height="${height}" rx="7" fill="${fill}" stroke="${pending ? "#C49635" : "#CAD7E6"}"${pending ? ' stroke-dasharray="6 4"' : ""}/>`);
-        const image = node.icon ? icons ? icons.get(node.icon) : node.icon : null;
-        if (image) parts.push(`<image href="${xml(image)}" x="${x + 17}" y="${rowY + 22}" width="34" height="34" preserveAspectRatio="xMidYMid meet" aria-hidden="true"/>`);
-        else parts.push(`<circle cx="${x + 32}" cy="${rowY + 39}" r="9" fill="${pending ? "#B98215" : "#0078D4"}" aria-hidden="true"/>`);
-        parts.push(text(wrapArchitectureText(node.label, 27), x + 67, rowY + 37, 21, "#172C45", true, 27));
-        const status = pending ? "Needs confirmation" : !node.required ? "Optional in the proposed design" : node.kind === "source" ? "Source permissions remain authoritative" : node.state === "managed" ? "Microsoft-managed capability" : node.kind === "capability" ? "Logical capability, not an extra deployment" : "Selected in the proposed design";
-        parts.push(text(wrapArchitectureText(status, 43), x + 18, rowY + height - 28, 13, pending ? "#865910" : "#52657C", false, 17));
-        parts.push("</g>");
-      });
-      rowY += heights[rowIndex] + gap;
-    });
-    y += Math.max(height, 100) + 28;
+export function renderArchitectureViewSvg(view: ArchitectureView, icons?: Map<string, string | null>, focus: DiagramFocus = "overview") {
+  const graph = buildArchitectureLayout(view, focus);
+  const width = Math.max(1280, graph.width + 80);
+  const top = 176;
+  const left = (width - graph.width) / 2;
+  const body: string[] = [];
+  body.push(lineText([graph.title], 34, 44, 29, "#17344F", true));
+  body.push(lineText([`${view.audience.join(", ") || "Users as selected"}  •  ${view.actionBoundary}`], 34, 77, 16, "#4B637B"));
+  body.push(`<rect x="34" y="94" width="${width - 68}" height="35" rx="3" fill="#FFF4DB"/>`);
+  body.push(lineText([view.disclaimer], 47, 118, 16, "#795711", true));
+  body.push(lineText(["Logical service boundaries — not an inferred subscription, subnet, or private-endpoint deployment."], 34, 154, 14, "#506880"));
+  body.push(`<g transform="translate(${left} ${top})" data-connected-architecture="true">`);
+  for (const group of graph.groups) {
+    body.push(`<g data-boundary-id="${xml(group.id)}"><rect x="${group.x}" y="${group.y}" width="${group.width}" height="${group.height}" rx="3" fill="#${group.fill}" stroke="#A9BDCF" stroke-width="1.3"/>`);
+    body.push(lineText([group.title], group.x + 12, group.y + 19, 14, "#244764", true));
+    body.push(lineText([group.subtitle], group.x + 12, group.y + group.height + 16, 11.5, "#566D83"));
+    body.push("</g>");
   }
-
-  const nodes = view.layers.flatMap(layer => layer.nodes);
-  const names = new Map(nodes.map(node => [node.id, node.label]));
-  const pathGroups = [
-    { title: "Request & governed access", kinds: ["request", "query"] },
-    { title: "Background preparation", kinds: ["preparation"] },
-    { title: "Confirm before enabling", kinds: ["conditional"] }
-  ];
-  for (const group of pathGroups) {
-    const edges = view.edges.filter(edge => group.kinds.includes(edge.kind));
-    if (!edges.length) continue;
-    y += 16;
-    parts.push(text([group.title], margin, y + 20, 23, "#172C45", true));
-    y += 54;
-    for (const edge of edges) {
-      const arrow = edge.kind === "conditional" ? " ··· " : " → ";
-      const lines = wrapArchitectureText(`${names.get(edge.from)}${arrow}${names.get(edge.to)} — ${edge.label}`, 108);
-      parts.push(text(lines, margin + 18, y, 17, edge.kind === "conditional" ? "#865910" : "#364E68", false, 24));
-      y += lines.length * 24 + 12;
-    }
+  for (const connection of graph.connections) {
+    const style = connectionStyle(connection.edge.kind);
+    const points = connection.points.map(point => `${point.x},${point.y}`).join(" ");
+    body.push(`<g data-connection-id="${connection.id}" data-from="${xml(connection.edge.from)}" data-to="${xml(connection.edge.to)}" data-kind="${connection.edge.kind}"><title>${xml(`${connection.number}. ${connection.edge.label}`)}</title><polyline points="${points}" fill="none" stroke="#${style.color}" stroke-width="2.3"${style.dash ? ` stroke-dasharray="${style.dash}"` : ""} marker-end="url(#arrow-${style.kind})"/></g>`);
   }
-
-  const controlGroups: Array<{ key: keyof ArchitectureView["controls"]; title: string }> = [
-    { key: "identity", title: "Identity" }, { key: "security", title: "Security & source boundaries" },
-    { key: "readiness", title: "Readiness — not authorization" }, { key: "operations", title: "Operations" },
-    { key: "network", title: "Deployment posture" }
-  ];
-  for (const group of controlGroups) {
-    const values = view.controls[group.key];
-    if (!values.length) continue;
-    y += 20;
-    parts.push(`<line x1="${margin}" y1="${y}" x2="${width - margin}" y2="${y}" stroke="#D7E1EC"/>`);
-    y += 38;
-    parts.push(text([group.title], margin, y, 22, "#172C45", true));
-    y += 36;
-    for (const item of values) {
-      const label = wrapArchitectureText(item.label + (item.required ? "" : " (recommended)"), 72);
-      parts.push(text(label, margin + 18, y, 17, "#172C45", true, 23));
-      y += label.length * 23;
-      const scope = wrapArchitectureText(item.scope, 118);
-      parts.push(text(scope, margin + 18, y, 14, "#52657C", false, 20));
-      y += scope.length * 20 + 16;
+  for (const placed of graph.nodes) {
+    const node = placed.node;
+    const pending = node.state === "confirm" || !node.required;
+    body.push(`<g ${placed.annotation ? "data-control-id" : "data-component-id"}="${xml(node.id)}" data-layer="${node.layer}"><title>${xml(node.detail)}</title><rect x="${placed.x}" y="${placed.y}" width="${placed.width}" height="${placed.height}" rx="3" fill="#FFFFFF" stroke="${pending ? "#A9771D" : "#B6C7D8"}" stroke-width="1.2"${pending ? ' stroke-dasharray="6 4"' : ""}/>`);
+    const image = node.icon ? icons ? icons.get(node.icon) : node.icon : null;
+    if (image) body.push(`<image href="${xml(image)}" x="${placed.x + placed.width / 2 - 22}" y="${placed.y + 16}" width="44" height="44" preserveAspectRatio="xMidYMid meet" aria-hidden="true"/>`);
+    else {
+      const cx = placed.x + placed.width / 2;
+      const cy = placed.y + 38;
+      body.push('<g data-generic-component="true" aria-hidden="true">');
+      if (placed.glyph === "phone") body.push(`<rect x="${cx - 13}" y="${cy - 23}" width="26" height="45" rx="4" fill="#F2F6FA" stroke="#55758F" stroke-width="2"/><line x1="${cx - 7}" x2="${cx + 7}" y1="${cy - 17}" y2="${cy - 17}" stroke="#55758F" stroke-width="2"/><circle cx="${cx}" cy="${cy + 16}" r="2" fill="#55758F"/>`);
+      else {
+        body.push(`<rect x="${cx - 25}" y="${cy - 18}" width="50" height="35" rx="3" fill="#F2F6FA" stroke="#55758F" stroke-width="2"/>`);
+        const symbol = placed.glyph === "api" ? "API" : placed.glyph === "code" ? "{ }" : placed.glyph === "pipeline" ? "ETL" : placed.glyph === "window" ? "WEB" : "SYS";
+        body.push(lineText([symbol], cx, cy + 5, 13, "#365875", true, "middle"));
+      }
+      body.push("</g>");
     }
+    body.push(lineText(placed.labelLines, placed.x + placed.width / 2, placed.y + 82, 16, "#153750", true, "middle"));
+    body.push(lineText([placed.caption], placed.x + placed.width / 2, placed.y + placed.height - 12, 10.5, pending ? "#805E18" : "#536D82", false, "middle"));
+    body.push("</g>");
+  }
+  for (const connection of graph.connections) {
+    const style = connectionStyle(connection.edge.kind);
+    body.push(`<g data-flow-number="${connection.number}"><circle cx="${connection.labelPoint.x}" cy="${connection.labelPoint.y}" r="12" fill="#FFFFFF" stroke="#${style.color}" stroke-width="1.6"/>`);
+    body.push(lineText([String(connection.number)], connection.labelPoint.x, connection.labelPoint.y + 4, 12, `#${style.color}`, true, "middle"));
+    body.push("</g>");
+  }
+  body.push("</g>");
+  let y = top + graph.height + 27;
+  body.push(lineText(["Connection references (not execution step numbers)"], 34, y, 17, "#17344F", true));
+  y += 26;
+  const names = new Map(graph.nodes.map(item => [item.node.id, item.node.label]));
+  const columnWidth = (width - 84) / 2;
+  let rowHeight = 0;
+  graph.connections.forEach((connection, index) => {
+    const x = 34 + (index % 2) * (columnWidth + 16);
+    const description = `${connection.number}. ${names.get(connection.edge.from)} → ${names.get(connection.edge.to)}: ${connection.edge.label}`;
+    const lines = wrapArchitectureText(description, Math.floor(columnWidth / 7.4));
+    body.push(lineText(lines, x, y, 13, `#${connectionStyle(connection.edge.kind).color}`));
+    rowHeight = Math.max(rowHeight, lines.length * 18 + 9);
+    if (index % 2 === 1 || index === graph.connections.length - 1) { y += rowHeight; rowHeight = 0; }
+  });
+  y += 16;
+  for (const [index, style] of DIAGRAM_LEGEND.entries()) {
+    const x = 34 + index * ((width - 68) / DIAGRAM_LEGEND.length);
+    body.push(`<line x1="${x}" x2="${x + 35}" y1="${y}" y2="${y}" stroke="#${style.color}" stroke-width="2.3"${style.dash ? ` stroke-dasharray="${style.dash}"` : ""} marker-end="url(#arrow-${style.kind})"/>`);
+    body.push(lineText([style.label], x + 45, y + 4, 12, "#405B72"));
+  }
+  y += 45;
+  const notes = [
+    { title: "Identity & authorization", items: [...view.controls.identity, ...view.controls.security] },
+    { title: "Readiness & operations", items: [...view.controls.readiness, ...view.controls.operations] },
+    { title: "Deployment posture", items: view.controls.network }
+  ];
+  const noteWidth = (width - 104) / 3;
+  let maxNoteHeight = 0;
+  for (const [index, note] of notes.entries()) {
+    const x = 34 + index * (noteWidth + 18);
+    let noteY = y + 25;
+    const parts = [lineText([note.title], x + 14, noteY, 16, "#264964", true)];
+    noteY += 29;
+    if (!note.items.length) {
+      parts.push(lineText(["No separate control selected"], x + 14, noteY, 13, "#526B80"));
+      noteY += 24;
+    }
+    for (const item of note.items) {
+      const lines = wrapArchitectureText(`${item.label}${item.required ? "" : " (recommended)"}`, Math.floor((noteWidth - 28) / 7.3));
+      parts.push(lineText(lines, x + 14, noteY, 13, "#334F67"));
+      noteY += lines.length * 18 + 7;
+    }
+    const height = noteY - y + 8;
+    maxNoteHeight = Math.max(maxNoteHeight, height);
+    body.push(`<rect x="${x}" y="${y}" width="${noteWidth}" height="${height}" rx="3" fill="#F7F9FC" stroke="#D4DFE9"/>${parts.join("")}`);
+  }
+  y += maxNoteHeight + 28;
+  for (const node of graph.nodes.filter(item => item.node.controls.length)) {
+    const lines = wrapArchitectureText(`${node.node.label} — source boundary: ${node.node.controls.join("; ")}`, Math.floor((width - 68) / 7.1));
+    body.push(lineText(lines, 34, y, 13, "#345B50"));
+    y += lines.length * 18 + 9;
   }
   if (view.decisions.length) {
-    y += 16;
-    parts.push(text(["Open design decisions"], margin, y, 24, "#172C45", true));
-    y += 37;
+    y += 14;
+    body.push(lineText(["Open decisions / validation conditions"], 34, y, 17, "#795711", true));
+    y += 26;
     for (const decision of view.decisions) {
-      const lines = wrapArchitectureText(decision, 113);
-      parts.push(text(lines, margin + 18, y, 16, "#865910", false, 23));
-      y += lines.length * 23 + 12;
+      const lines = wrapArchitectureText(decision, Math.floor((width - 68) / 7.1));
+      body.push(lineText(lines, 34, y, 13, "#725A2D"));
+      y += lines.length * 18 + 7;
     }
   }
-  y += 46;
-  parts.push(text(["Architecture Pathfinder • component view v1 • Selected does not mean deployed or verified"], margin, y, 14, "#52657C"));
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${y + 30}" viewBox="0 0 ${width} ${y + 30}" role="img" aria-label="Proposed layered architecture"><rect width="100%" height="100%" fill="#FFFFFF"/>${parts.join("")}</svg>`;
+  body.push(lineText(["Architecture Pathfinder • connected view v2 • Logical design, not a verified deployment"], 34, y + 24, 12, "#526B80"));
+  const markers = DIAGRAM_LEGEND.map(style => `<marker id="arrow-${style.kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#${style.color}"/></marker>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${y + 43}" viewBox="0 0 ${width} ${y + 43}" role="img" aria-label="Connected layered architecture"><defs>${markers}</defs><rect width="100%" height="100%" fill="#FFFFFF"/>${body.join("")}</svg>`;
 }
 
 export function buildArchitectureSvg(decision: ArchitectureDecision, input?: DecisionInput, icons?: Map<string, string | null>) {

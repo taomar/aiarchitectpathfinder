@@ -1,8 +1,15 @@
 # Architecture views and PowerPoint
 
 The recommendation page, downloaded SVG, service-flow view, and PowerPoint use
-one shared architecture model. Their component names, layer assignments, and
-confirmation states come from the same source.
+one shared architecture graph. Their component names, connections, and
+confirmation states come from the same source. Code renders the diagram, not an
+image-generation model; the report's configured AI model supplies its reviewed
+architecture content.
+
+The connected view follows [Microsoft's architecture diagram guidance](https://learn.microsoft.com/en-us/azure/well-architected/architect-role/design-diagrams):
+official service icons, directional arrows, labeled relationships, explicit
+logical boundaries, and a line-style legend. It does not invent a VNet, subnet,
+or private endpoint to make an illustration look more technical.
 
 ## The repeatable template
 
@@ -26,10 +33,16 @@ RLS must not be assumed to apply to a separate Lakehouse query.
 **Needs confirmation** marks an unresolved role, access path, or implementation
 decision. Confirmation paths must not be treated as already enabled access.
 
+Use **Diagram detail** to switch between the full topology, entry/orchestration,
+models, data access, and background preparation. Zoom controls help inspect the
+full diagram. Connection numbers refer to the accompanying relationship list,
+not execution-step ordering.
+
 ## Presentation structure
 
 The deck opens with the decision and architecture story, then presents editable
-layered component views and required review gates. The appendix preserves the
+connected architecture views and required review gates. Complex overviews are
+followed by focused diagrams with editable service boxes and arrows. The appendix preserves the
 complete profile, architecture narrative, components, controls, risks, conditions,
 and review notes without clipping sentences.
 
@@ -51,4 +64,5 @@ The model and presentation checks can be run without model calls:
 
 ```powershell
 node --import tsx scripts\qa\presentation-design-check.ts
+npm run test:diagram-layout
 ```

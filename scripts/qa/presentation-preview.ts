@@ -8,6 +8,7 @@ import { TieBreakSchema } from "../../lib/azure-openai";
 import { withAiRecommendation } from "../../components/FinalRecommendation";
 import { displayPatternName } from "../../lib/pathfinder-category";
 import { buildArchitectureView } from "../../lib/architecture-view";
+import { availableDiagramFocuses, buildArchitectureLayout } from "../../lib/architecture-layout";
 import { renderArchitectureViewSvg } from "../../lib/architecture-svg";
 import { buildPowerPoint } from "../../lib/powerpoint";
 
@@ -28,7 +29,7 @@ const input = prepareDecisionInputForRecommendation(record.input);
 const review = TieBreakSchema.extend({}).passthrough().parse(record.report);
 const decision = withAiRecommendation(decide(input), { ...review, aiValidated: true });
 const model = buildArchitectureView(decision, input);
-const nodes = model.layers.flatMap(layer => layer.nodes);
+const nodes = buildArchitectureLayout(model).nodes.map(item => item.node);
 const assets: Record<string, string> = {};
 const svgAssets = new Map<string, string | null>();
 for (const node of nodes) {
@@ -52,6 +53,11 @@ const svg = renderArchitectureViewSvg(model, svgAssets);
 fs.writeFileSync(path.join(outputDirectory, "layered-architecture.svg"), svg);
 await sharp(Buffer.from(svg)).resize({ width: 1520 }).png().toFile(path.join(outputDirectory, "layered-architecture.png"));
 fs.writeFileSync(path.join(outputDirectory, "architecture-model.json"), JSON.stringify(model, null, 2));
+for (const focus of availableDiagramFocuses(model).filter(value => value !== "overview")) {
+  const focused = renderArchitectureViewSvg(model, svgAssets, focus);
+  fs.writeFileSync(path.join(outputDirectory, `architecture-${focus}.svg`), focused);
+  await sharp(Buffer.from(focused)).resize({ width: 1520 }).png().toFile(path.join(outputDirectory, `architecture-${focus}.png`));
+}
 console.log(`Generated ${result.slides} slides and the shared layered diagram without model calls.`);
 }
 

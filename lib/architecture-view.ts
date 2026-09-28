@@ -74,18 +74,18 @@ const DEFINITIONS: Definition[] = [
   { id: "native-knowledge", label: "Copilot Studio native knowledge", layer: "grounding", match: /copilot studio.*native knowledge|native.*knowledge source/i, kind: "capability", state: "managed", icon: icon("power-platform", "copilot-studio") },
   { id: "copilot-model", label: "Microsoft-managed AI", layer: "models", match: /copilot studio.*(?:managed ai|managed model)/i, kind: "capability", state: "managed", icon: icon("power-platform", "copilot-studio") },
   { id: "copilot-coordination", label: "Copilot Studio coordination", layer: "runtime", match: /copilot studio.*(?:coordination|orchestration)/i, kind: "capability", state: "managed", icon: icon("power-platform", "copilot-studio") },
-  { id: "foundry-agent", label: "Foundry Agent Service", layer: "runtime", match: /foundry agent service/i, icon: icon("azure", "azure-ai-studio") },
-  { id: "custom-backend", label: "Custom backend", layer: "runtime", match: /\bbackend\b/i, icon: icon("azure", "app-services") },
+  { id: "foundry-agent", label: "Foundry Agent Service", layer: "runtime", match: /foundry agent service/i, icon: icon("azure", "foundry-agent-service") },
+  { id: "custom-backend", label: "Custom backend", layer: "runtime", match: /\bbackend\b/i, kind: "capability" },
   { id: "copilot-studio", label: "Copilot Studio", layer: "runtime", match: /copilot studio/i, state: "managed", icon: icon("power-platform", "copilot-studio") },
   { id: "m365-copilot", label: "Microsoft 365 Copilot", layer: "runtime", match: /microsoft 365 copilot/i, state: "managed", icon: icon("fabric", "copilot") },
   { id: "fabric-agent", label: "Microsoft Fabric Data Agent", layer: "grounding", match: /fabric data agent/i, icon: icon("fabric", "data-agent") },
   { id: "search", label: "Azure AI Search", layer: "grounding", match: /azure ai search/i, icon: icon("azure", "azure-ai-search") },
   { id: "preparation", label: "Content preparation", layer: "preparation", match: /document.*(?:ingestion|indexing|preparation)|ocr.*pipeline|enriched chunks|retrieval chunks|index metadata/i, kind: "capability" },
   { id: "fine-tuned-openai", label: "Fine-tuned Azure OpenAI model", layer: "models", match: /fine.tuned.*azure openai|azure openai.*fine.tuned/i, icon: icon("azure", "azure-openai") },
-  { id: "fine-tuned-foundry", label: "Fine-tuned Foundry model", layer: "models", match: /fine.tuned.*foundry|foundry.*fine.tuned/i, icon: icon("azure", "azure-ai-studio") },
+  { id: "fine-tuned-foundry", label: "Fine-tuned Foundry model", layer: "models", match: /fine.tuned.*foundry|foundry.*fine.tuned/i, icon: icon("azure", "foundry-models") },
   { id: "openai", label: "Azure OpenAI deployment", layer: "models", match: /azure openai/i, icon: icon("azure", "azure-openai") },
   { id: "azure-ml", label: "Azure Machine Learning endpoint", layer: "models", match: /azure machine learning|azure ml|managed online endpoint/i, icon: icon("azure", "azure-machine-learning") },
-  { id: "foundry", label: "Microsoft Foundry", layer: "models", match: /azure ai foundry|foundry models|foundry model catalog/i, kind: "platform", icon: icon("azure", "azure-ai-studio") },
+  { id: "foundry", label: "Microsoft Foundry", layer: "models", match: /azure ai foundry|foundry models|foundry model catalog/i, kind: "platform", icon: icon("azure", "microsoft-foundry") },
   { id: "apim", label: "API Management", layer: "edge", match: /api management|\bapim\b/i, icon: icon("azure", "api-management") },
   { id: "waf", label: "Front Door / WAF", layer: "edge", match: /front door|\bwaf\b|web application firewall/i, icon: icon("azure", "front-door") },
   { id: "pbi", label: "Power BI semantic model", layer: "data", match: /power bi semantic|semantic model/i, kind: "source", icon: icon("fabric", "semantic-model") },
@@ -98,15 +98,15 @@ const DEFINITIONS: Definition[] = [
   { id: "blob", label: "Blob Storage", layer: "data", match: /blob storage|blob files/i, kind: "source", icon: icon("azure", "storage-account") },
   { id: "sql", label: "Azure SQL", layer: "data", match: /azure sql|sql server|sql database/i, kind: "source", icon: icon("azure", "azure-sql") },
   { id: "dataverse", label: "Dataverse", layer: "data", match: /dataverse/i, kind: "source", icon: icon("power-platform", "dataverse") },
-  { id: "business-api", label: "Business APIs", layer: "data", match: /business api|operational.*api|data.*\bapi\b/i, kind: "source", icon: icon("azure", "custom-connector") },
-  { id: "erp", label: "ERP / CRM", layer: "data", match: /\berp\b|\bcrm\b/i, kind: "source", icon: icon("azure", "custom-connector") },
+  { id: "business-api", label: "Business APIs", layer: "data", match: /business api|operational.*api|data.*\bapi\b/i, kind: "source" },
+  { id: "erp", label: "ERP / CRM", layer: "data", match: /\berp\b|\bcrm\b/i, kind: "source" },
   { id: "on-prem", label: "On-premises systems", layer: "data", match: /on-prem/i, kind: "source", icon: icon("azure", "virtual-network") },
   { id: "documents", label: "Document repository", layer: "data", match: /documents|pdfs|document repository|files/i, kind: "source", icon: icon("m365", "m365-document") },
   { id: "teams", label: "Microsoft Teams", layer: "channels", match: /\bteams\b/i, icon: icon("m365", "teams-chat") },
   { id: "m365", label: "Microsoft 365", layer: "channels", match: /microsoft 365|\bm365\b/i, icon: icon("m365", "m365-cloud") },
-  { id: "mobile", label: "Mobile app", layer: "channels", match: /\bmobile\b/i, icon: icon("azure", "app-services") },
-  { id: "web", label: "Web app / portal", layer: "channels", match: /web app|portal|website/i, icon: icon("azure", "app-services") },
-  { id: "api-channel", label: "API interface", layer: "channels", match: /^api(?: experience)?$/i, icon: icon("azure", "api-management") },
+  { id: "mobile", label: "Mobile app", layer: "channels", match: /\bmobile\b/i, kind: "capability" },
+  { id: "web", label: "Web app / portal", layer: "channels", match: /web app|portal|website/i, kind: "capability" },
+  { id: "api-channel", label: "API interface", layer: "channels", match: /^api(?: experience)?$/i, kind: "capability" },
   { id: "durable-functions", label: "Durable Functions", layer: "runtime", match: /durable functions/i, icon: icon("azure", "function-apps") },
   { id: "functions", label: "Azure Functions", layer: "runtime", match: /azure functions/i, icon: icon("azure", "function-apps") },
   { id: "logic-apps", label: "Logic Apps", layer: "runtime", match: /logic apps/i, icon: icon("azure", "logic-apps") },
@@ -174,10 +174,10 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
         definition = { id: "fabric-access", label: /report|api/i.test(original) ? "Governed Fabric reports / APIs" : "Governed Fabric storage access", layer: "interfaces", kind: "capability", match: /./, icon: icon("fabric", "fabric") };
       } else if (layer.layer === "Analytics/Grounding" && /operational|governed.*connector|data.access/i.test(original) &&
           !/fabric data agent|azure ai search|native knowledge/i.test(original)) {
-        definition = { id: "governed-access", label: "Governed data access", layer: "interfaces", kind: "capability", match: /./, icon: icon("azure", "custom-connector") };
+        definition = { id: "governed-access", label: "Governed data access", layer: "interfaces", kind: "capability", match: /./ };
       } else if (layer.layer === "Integration" && !/api management|\bapim\b|front door|\bwaf\b|document.*(?:ingest|index|prepar)|ocr/i.test(original)) {
         if (/model deployment endpoint|azure ai search index/i.test(original)) continue;
-        definition = { id: "governed-access", label: "Governed data access", layer: "interfaces", kind: "capability", match: /./, icon: icon("azure", "custom-connector") };
+        definition = { id: "governed-access", label: "Governed data access", layer: "interfaces", kind: "capability", match: /./ };
       } else if (layer.layer === "Runtime/Backend" && /backend/i.test(original)) {
         definition = DEFINITIONS.find(item => item.id === "custom-backend");
       } else if (layer.layer === "Knowledge/Data" && /\bapis?\b/i.test(original)) {
@@ -233,7 +233,7 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
   if (operationalSources.length && !nodes.has("governed-access")) {
     add({
       id: "governed-access", label: "Governed data access", detail: "An application/tool capability, not an additional deployment. Source authorization remains authoritative.",
-      layer: "interfaces", kind: "capability", state: "selected", required: true, icon: icon("azure", "custom-connector")
+      layer: "interfaces", kind: "capability", state: "selected", required: true
     }, "Controlled source operations");
   }
   if (fabricSources.length && !nodes.has("fabric-agent") && !nodes.has("fabric-access")) {
@@ -250,11 +250,21 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
   const processor = nodes.has("foundry-agent") ? "foundry-agent" : entry;
   const gateways = ["waf", "apim"].filter(id => nodes.has(id));
   const channels = [...nodes.values()].filter(node => node.layer === "channels");
-  const customChannel = channels.some(node => ["mobile", "web", "api-channel"].includes(node.id));
-  for (const channel of channels) connect(channel.id, customChannel && gateways.length ? gateways[0] : entry, "approved entry");
-  gateways.forEach((id, index) => connect(id, gateways[index + 1] ?? entry, "gateway policy"));
-  connect(entry, processor, "delegated execution");
-  runtime.filter(node => node.id !== entry && node.id !== processor).forEach(node => connect(processor, node.id, "hosting / coordination", "contains"));
+  const entryNodes = new Set<string>();
+  for (const channel of channels) {
+    const customChannel = ["mobile", "web", "api-channel"].includes(channel.id);
+    const channelEntry = customChannel && nodes.has("custom-backend") ? "custom-backend" : entry;
+    if (channelEntry) entryNodes.add(channelEntry);
+    connect(channel.id, customChannel && gateways.length ? gateways[0] : channelEntry, "approved entry");
+  }
+  const gatewayEntry = nodes.has("custom-backend") ? "custom-backend" : entry;
+  if (gateways.length && gatewayEntry) entryNodes.add(gatewayEntry);
+  gateways.forEach((id, index) => connect(id, gateways[index + 1] ?? gatewayEntry, "gateway policy"));
+  if (!entryNodes.size && entry) entryNodes.add(entry);
+  for (const runtimeEntry of entryNodes) {
+    if (nodes.has("foundry-agent") || runtimeEntry === entry) connect(runtimeEntry, processor, "delegated execution");
+  }
+  runtime.filter(node => !entryNodes.has(node.id) && node.id !== processor).forEach(node => connect(processor, node.id, "hosting / coordination", "contains"));
   const inference = [...nodes.values()].filter(node => node.layer === "models" && node.kind !== "platform");
   inference.forEach(node => {
     connect(node.id === "copilot-model" && nodes.has("copilot-studio") ? "copilot-studio" : processor, node.id, "inference with approved context");

@@ -1,7 +1,8 @@
 import type PptxGenJS from "pptxgenjs";
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse } from "./types";
-import { ARCHITECTURE_DISCLAIMER, buildArchitectureView, type ArchitectureView, type ViewNode } from "./architecture-view";
+import { ARCHITECTURE_DISCLAIMER, buildArchitectureView, type ArchitectureView } from "./architecture-view";
 import { reportDetailSections, reportUseCaseSummary } from "./export";
+import { availableDiagramFocuses, buildArchitectureLayout, connectionStyle, type ArchitectureLayout } from "./architecture-layout";
 
 /*
  * THESIS: An architecture decision story, not a document squeezed into slide boxes.
@@ -126,18 +127,6 @@ function prosePages(pptx: PptxGenJS, title: string, value: string, section: stri
   });
 }
 
-function nodeCard(pptx: PptxGenJS, slide: Slide, node: ViewNode, x: number, y: number, w: number, h: number) {
-  const pending = node.state === "confirm";
-  rect(pptx, slide, x, y, w, h, pending ? C.amberFill : C.pale, pending ? "DDC38C" : C.line);
-  const image = deckState.get(pptx)?.assets?.icons?.[node.id];
-  const titleX = x + (image ? 0.64 : 0.2);
-  if (image) slide.addImage({ data: image, x: x + 0.17, y: y + 0.19, w: 0.31, h: 0.31 });
-  const label = wrapSlideText(node.label, Math.max(18, Math.floor((w - (image ? 0.84 : 0.4)) * 7.2))).join("\n");
-  text(slide, label, titleX, y + 0.17, w - (titleX - x) - 0.15, h - 0.47, 18, { bold: true, color: C.ink });
-  text(slide, pending ? "Needs confirmation" : !node.required ? "Optional component" : node.state === "managed" ? "Microsoft-managed" : node.kind === "capability" ? "Logical capability" : node.kind === "source" ? "Source-owned permissions" : "Proposed component",
-    x + 0.2, y + h - 0.27, w - 0.4, 0.19, 10.5, { color: pending ? C.amber : C.muted });
-}
-
 function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: ArchitectureView) {
   const slide = pptx.addSlide();
   deckState.get(pptx)!.page++;
@@ -196,28 +185,95 @@ export function addArchitectureBlueprintSlide(pptx: PptxGenJS, details: {
   architectureSummary: string; solutionType: string; displayPattern: string;
 }) {
   const view = buildArchitectureView(details.decision, details.input);
-  const rows = view.layers.filter(layer => layer.nodes.length).flatMap(layer => {
-    const columns = layer.nodes.some(node => node.label.length > 48) ? 1 : 3;
-    const result: Array<{ title: string; description: string; nodes: ViewNode[] }> = [];
-    for (let i = 0; i < layer.nodes.length; i += columns) {
-      result.push({ title: layer.title, description: layer.description, nodes: layer.nodes.slice(i, i + columns) });
-    }
-    return result;
-  });
-  if (!rows.length) {
+  const overview = buildArchitectureLayout(view);
+  if (!overview.nodes.length) {
     prosePages(pptx, "Confirm the architecture inputs", details.decision.finalRecommendation, "Architecture");
     return;
   }
-  for (let offset = 0; offset < rows.length; offset += 3) {
-    const slide = frame(pptx, offset ? "One architecture, layer by layer · continued" : "One architecture, layer by layer", "Architecture");
-    rows.slice(offset, offset + 3).forEach((row, index) => {
-      const y = 1.96 + index * 1.53;
-      text(slide, wrapSlideText(row.title, 18).join("\n"), 0.73, y + 0.16, 1.93, 0.9, 18, { bold: true });
-      const x0 = 2.91;
-      const gap = 0.14;
-      const w = (9.61 - gap * (row.nodes.length - 1)) / row.nodes.length;
-      row.nodes.forEach((node, nodeIndex) => nodeCard(pptx, slide, node, x0 + nodeIndex * (w + gap), y, w, 1.31));
+  const focuses = overview.nodes.length > 7 ? availableDiagramFocuses(view) : ["overview"] as const;
+  for (const focus of focuses) {
+    const graph = focus === "overview" ? overview : buildArchitectureLayout(view, focus);
+    const slide = frame(pptx, graph.title, focus === "overview" && overview.nodes.length > 7
+      ? "Topology overview · readable detail views follow" : "Connected architecture");
+    addConnectedDiagram(pptx, slide, graph);
+    const references = graph.connections.map(connection => {
+      const from = graph.nodes.find(item => item.node.id === connection.edge.from)!.node.label;
+      const to = graph.nodes.find(item => item.node.id === connection.edge.to)!.node.label;
+      return `${connection.number}. ${from} → ${to}: ${connection.edge.label}`;
     });
+    slide.addNotes(references.join("\n"));
+  }
+}
+
+function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureLayout) {
+  const box = { x: 0.64, y: 1.88, width: 12.04, height: 4.18 };
+  const scale = Math.min(box.width / graph.width, box.height / graph.height);
+  const left = box.x + (box.width - graph.width * scale) / 2;
+  const top = box.y + (box.height - graph.height * scale) / 2;
+  const px = (value: number) => left + value * scale;
+  const py = (value: number) => top + value * scale;
+  const font = (value: number) => value * scale * 72;
+  for (const group of graph.groups) {
+    rect(pptx, slide, px(group.x), py(group.y), group.width * scale, group.height * scale, group.fill, "ADBECE");
+    text(slide, group.title, px(group.x + 10), py(group.y + 5), (group.width - 20) * scale, 19 * scale, font(13), { bold: true, color: "274962" });
+  }
+  for (const connection of graph.connections) {
+    const style = connectionStyle(connection.edge.kind);
+    const points = connection.points;
+    for (let index = 1; index < points.length; index++) {
+      const start = points[index - 1], end = points[index];
+      const dx = end.x - start.x, dy = end.y - start.y;
+      if (Math.abs(dx) + Math.abs(dy) < 0.001) continue;
+      slide.addShape(pptx.ShapeType.line, {
+        x: px(Math.min(start.x, end.x)), y: py(Math.min(start.y, end.y)),
+        w: Math.max(Math.abs(dx) * scale, 0.001), h: Math.abs(dy) * scale,
+        flipH: dx < 0, flipV: dy < 0,
+        line: {
+          color: style.color, width: 1.3,
+          ...(style.dash ? { dashType: connection.edge.kind === "contains" || connection.edge.kind === "policy" ? "dash" as const : "lgDash" as const } : {}),
+          ...(index === points.length - 1 ? { endArrowType: "triangle" as const } : {})
+        }
+      });
+    }
+  }
+  for (const placed of graph.nodes) {
+    const node = placed.node;
+    const pending = node.state === "confirm" || !node.required;
+    rect(pptx, slide, px(placed.x), py(placed.y), placed.width * scale, placed.height * scale, "FFFFFF", pending ? "AF8025" : "B8C8D7");
+    const image = deckState.get(pptx)?.assets?.icons?.[node.id];
+    if (image) slide.addImage({ data: image, x: px(placed.x + placed.width / 2 - 22), y: py(placed.y + 16), w: 44 * scale, h: 44 * scale });
+    else {
+      const cx = placed.x + placed.width / 2;
+      const cy = placed.y + 38;
+      if (placed.glyph === "phone") {
+        rect(pptx, slide, px(cx - 13), py(cy - 23), 26 * scale, 45 * scale, "F2F6FA", "55758F");
+        slide.addShape(pptx.ShapeType.line, { x: px(cx - 7), y: py(cy - 17), w: 14 * scale, h: 0, line: { color: "55758F", width: 0.8 } });
+        slide.addShape(pptx.ShapeType.ellipse, { x: px(cx - 2), y: py(cy + 14), w: 4 * scale, h: 4 * scale, fill: { color: "55758F" }, line: { color: "55758F" } });
+      } else {
+        rect(pptx, slide, px(cx - 25), py(cy - 18), 50 * scale, 35 * scale, "F2F6FA", "55758F");
+        const symbol = placed.glyph === "api" ? "API" : placed.glyph === "code" ? "{ }" : placed.glyph === "pipeline" ? "ETL" : placed.glyph === "window" ? "WEB" : "SYS";
+        text(slide, symbol, px(cx - 25), py(cy - 18), 50 * scale, 35 * scale, font(13), { bold: true, align: "center", valign: "middle", color: "365875" });
+      }
+    }
+    text(slide, placed.labelLines.join("\n"), px(placed.x + 8), py(placed.y + 68), (placed.width - 16) * scale, placed.labelLines.length * 22 * scale, font(16), { bold: true, align: "center" });
+    text(slide, placed.caption, px(placed.x + 5), py(placed.y + placed.height - 21), (placed.width - 10) * scale, 16 * scale, font(10), { color: pending ? C.amber : C.muted, align: "center" });
+  }
+  for (const connection of graph.connections) {
+    const size = 24 * scale;
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: px(connection.labelPoint.x) - size / 2, y: py(connection.labelPoint.y) - size / 2,
+      w: size, h: size, fill: { color: "FFFFFF" }, line: { color: connectionStyle(connection.edge.kind).color, width: 0.8 }
+    });
+    text(slide, String(connection.number), px(connection.labelPoint.x) - size / 2, py(connection.labelPoint.y) - size / 2,
+      size, size, font(12), { bold: true, align: "center", valign: "middle", color: connectionStyle(connection.edge.kind).color });
+  }
+  const visibleLabels = graph.connections.slice(0, 8);
+  visibleLabels.forEach((connection, index) => {
+    text(slide, `${connection.number}. ${connection.shortLabel}`, 0.72 + index % 4 * 3.08, 6.24 + Math.floor(index / 4) * 0.25,
+      2.95, 0.22, 10.5, { color: connectionStyle(connection.edge.kind).color });
+  });
+  if (graph.connections.length > 8) {
+    text(slide, "All connection references: speaker notes and source-boundary appendix.", 0.72, 6.77, 11.8, 0.15, 9, { color: C.muted });
   }
 }
 

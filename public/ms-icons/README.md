@@ -11,3 +11,9 @@ These icons are included only for architecture diagrams and documentation in acc
 The Microsoft logo used on suggested-architecture presentations is the unmodified
 Microsoft header asset from https://uhf.microsoft.com/images/microsoft/RE1Mu3b.png.
 It does not indicate Microsoft review or approval of the generated architecture.
+
+The dedicated Foundry Agent Service, Microsoft Foundry, and Foundry Models
+icons come unmodified from Microsoft's July 2026 V24 icon set:
+https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip.
+Generic client applications and logical capabilities use generic shapes, not
+unrelated Azure product icons.

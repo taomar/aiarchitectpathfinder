@@ -5,6 +5,7 @@ import { EXAMPLES } from "../../lib/examples";
 import { decide } from "../../lib/decision-engine";
 import { prepareDecisionInputForRecommendation } from "../../lib/summary-intake";
 import { ARCHITECTURE_DISCLAIMER, buildArchitectureView } from "../../lib/architecture-view";
+import { buildArchitectureLayout } from "../../lib/architecture-layout";
 import { caseDirectory, capturePowerPoint, diagnostics, login } from "./helpers";
 
 test("all shipped scenarios render the same layered model on the recommendation page", async ({ page }, info) => {
@@ -17,7 +18,7 @@ test("all shipped scenarios render the same layered model on the recommendation 
   for (const [index, example] of EXAMPLES.entries()) {
     await page.getByRole("article").nth(index).getByRole("button", { name: "Load this Scenario", exact: true }).click();
     await page.getByRole("button", { name: /^Architecture\b/ }).click();
-    await expect(page.getByRole("heading", { name: "Repeatable layered architecture", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Connected Microsoft architecture", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Generate architecture", exact: true }).click();
     const diagram = page.getByRole("img", { name: /^Architecture diagram for/ });
     await expect(diagram.locator("svg")).toBeVisible();
@@ -25,11 +26,20 @@ test("all shipped scenarios render the same layered model on the recommendation 
     const model = buildArchitectureView(decide(input), input);
     const actualIds = await diagram.locator("[data-component-id]").evaluateAll(elements => elements.map(element => element.getAttribute("data-component-id")).sort());
     expect(actualIds).toEqual(model.layers.flatMap(layer => layer.nodes.map(node => node.id)).sort());
+    await expect(diagram.locator("[data-connection-id]")).toHaveCount(buildArchitectureLayout(model).connections.length);
+    expect(await diagram.locator("polyline[marker-end]").count()).toBeGreaterThan(0);
     await expect(diagram).toContainText(ARCHITECTURE_DISCLAIMER);
     const flow = page.locator("section").filter({ has: page.getByRole("heading", { name: "Service flow", exact: true }) });
     await expect(flow.locator("svg")).toBeVisible();
     console.log(`PASS rendered layers and flow: ${example.id}`);
     if ([0, 5, 10].includes(index)) await diagram.screenshot({ path: path.join(caseDirectory(info), `${example.id}.png`) });
+    if (index === 5) {
+      await page.getByLabel("Diagram detail", { exact: true }).selectOption("preparation");
+      await expect(diagram.locator("[data-connection-id]")).toHaveCount(buildArchitectureLayout(model, "preparation").connections.length);
+      await page.getByRole("button", { name: "Zoom in architecture", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Fit (125%)", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Fit (125%)", exact: true }).click();
+    }
     await page.getByRole("button", { name: "Start over", exact: true }).click();
     await expect(page.getByRole("button", { name: "Start your use case", exact: true })).toBeVisible();
   }

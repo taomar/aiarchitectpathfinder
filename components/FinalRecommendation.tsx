@@ -1372,9 +1372,9 @@ export function FinalRecommendation({
       <section className="card rounded-xl">
         <div className="flex flex-wrap items-center justify-between gap-3" data-coach="rec-architecture">
           <div>
-            <h2 className="text-base font-semibold">Repeatable layered architecture</h2>
+            <h2 className="text-base font-semibold">Connected Microsoft architecture</h2>
             <p className="mt-0.5 text-xs text-gray-500">
-              A fixed layer order, explicit source boundaries, and separate background preparation. The page, SVG, service flow, and PowerPoint use the same architecture model.
+              Service icons, labeled connections, and logical workload boundaries. Request paths and background preparation are distinct; the page and PowerPoint share the same connected layout.
             </p>
           </div>
           <button
