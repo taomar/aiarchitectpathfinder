@@ -322,3 +322,71 @@ html, body {
 .choice-active {
   @apply choice-selected;
 }
+
+.recommendation-generation-panel {
+  isolation: isolate;
+}
+.recommendation-generation-step.is-active .recommendation-generation-symbol {
+  animation: recommendation-symbol-pulse 1.8s ease-in-out infinite;
+}
+.recommendation-stage-activity > span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: #0F6CBD;
+  animation: recommendation-stage-sweep 1.8s ease-in-out infinite;
+}
+.recommendation-generation-link {
+  position: relative;
+  overflow: hidden;
+}
+.recommendation-transfer-dot {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0F6CBD;
+  animation: recommendation-transfer 1.4s ease-in-out infinite;
+}
+.recommendation-preview-dim {
+  opacity: 0.28;
+  pointer-events: none;
+  user-select: none;
+}
+.recommendation-result-reveal {
+  animation: recommendation-result-reveal 240ms ease-out both;
+}
+[data-motion-paused="true"] .recommendation-generation-symbol,
+[data-motion-paused="true"] .recommendation-stage-activity > span,
+[data-motion-paused="true"] .recommendation-transfer-dot {
+  animation-play-state: paused;
+}
+@keyframes recommendation-symbol-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+@keyframes recommendation-stage-sweep {
+  0% { transform: translateX(-100%); opacity: 0.5; }
+  60% { opacity: 1; }
+  100% { transform: translateX(385%); opacity: 0.5; }
+}
+@keyframes recommendation-transfer {
+  0% { transform: translateX(-6px); opacity: 0; }
+  35%, 70% { opacity: 1; }
+  100% { transform: translateX(38px); opacity: 0; }
+}
+@keyframes recommendation-result-reveal {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recommendation-generation-symbol,
+  .recommendation-stage-activity > span,
+  .recommendation-transfer-dot,
+  .recommendation-result-reveal {
+    animation: none !important;
+  }
+  .recommendation-stage-activity > span { width: 100%; opacity: 0.65; }
+  .recommendation-transfer-dot { display: none; }
+}

@@ -1,8 +1,15 @@
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse } from "./types";
 import { buildMermaidDiagram, displayPatternName } from "./pathfinder-category";
+import { AcceptedRecommendationSchema, recommendationDecision, recommendationReviewLabel } from "./recommendation-contract";
+
+function exportDecision(decision: ArchitectureDecision, review?: TieBreakResponse | null) {
+  return review?.authority === "ai"
+    ? recommendationDecision(AcceptedRecommendationSchema.parse(review))
+    : decision;
+}
 
 export function toJSON(input: DecisionInput, decision: ArchitectureDecision, review?: TieBreakResponse | null, refinement?: string): string {
-  return JSON.stringify({ input, decision, ...(review ? { review } : {}), ...(refinement ? { refinement } : {}) }, null, 2);
+  return JSON.stringify({ input, decision: exportDecision(decision, review), ...(review ? { review } : {}), ...(refinement ? { refinement } : {}) }, null, 2);
 }
 
 function clean(items: string[]) {
@@ -18,6 +25,7 @@ export function reportUseCaseSummary(input: DecisionInput, decision: Architectur
 }
 
 export function reportDetailSections(input: DecisionInput, decision: ArchitectureDecision, review?: TieBreakResponse | null, refinement?: string) {
+  decision = exportDecision(decision, review);
   const profile = Object.entries(input)
     .filter(([key, value]) => key !== "summary" && value !== undefined)
     .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") || "(none)" : String(value)}`);
@@ -32,8 +40,9 @@ export function reportDetailSections(input: DecisionInput, decision: Architectur
         `User scenario: ${input.summary?.trim() || "(no free-text scenario provided)"}`,
         ...(refinement ? [`Review notes (profile unchanged): ${refinement}`] : []),
         `Recommended solution: ${displayPatternName(decision)}`,
-        `Base route: ${decision.basePatternId}; engine confidence: ${decision.confidence}`,
-        `Review mode: ${review ? review.recommendationMode || "AI write-up" : "deterministic; no completed AI review for this revision"}`,
+        `Base route: ${decision.basePatternId}; ${decision.authority === "ai" ? "AI" : "draft"} confidence: ${decision.confidence}`,
+        `Generation mode: ${review ? review.recommendationMode || "AI write-up" : "preliminary draft"}`,
+        ...(review?.review ? [recommendationReviewLabel(review.review)] : []),
         `Candidate routes: ${decision.candidateBasePatternIds.join(", ") || "(none)"}`,
         ...profile
       ]
@@ -75,6 +84,8 @@ export function reportDetailSections(input: DecisionInput, decision: Architectur
     {
       title: "AI review details",
       items: [
+        ...(review?.review ? [recommendationReviewLabel(review.review)] : []),
+        ...(review?.review && review.review.status !== "not-requested" ? [review.review.summary, ...review.review.issues] : []),
         ...(review?.reasoning ?? []),
         ...(review?.agentTrace ?? []).flatMap((item) => [
           `${item.agent} (${item.status}): ${item.summary}`,
@@ -86,6 +97,7 @@ export function reportDetailSections(input: DecisionInput, decision: Architectur
 }
 
 export function toMarkdown(input: DecisionInput, decision: ArchitectureDecision, review?: TieBreakResponse | null, refinement?: string): string {
+  decision = exportDecision(decision, review);
   const displayPattern = displayPatternName(decision);
   const assumptions = clean([...decision.assumptions, ...(review?.assumptions ?? [])]);
   const risks = clean([...decision.riskFlags, ...(review?.riskFlags ?? [])]);
@@ -101,6 +113,8 @@ export function toMarkdown(input: DecisionInput, decision: ArchitectureDecision,
     .join("\n");
 
   return `# AI Platform Recommendation
+
+${review?.review ? recommendationReviewLabel(review.review) : "Preliminary architecture"}
 
 ## Use Case Summary
 ${input.summary || "(no summary provided)"}

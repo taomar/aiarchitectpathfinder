@@ -1,8 +1,14 @@
 # AI Architecture Pathfinder
 
 Profile an agentic AI use case and generate a platform recommendation, architectural
-layers, and exportable diagrams. The application uses Next.js, a deterministic
-decision engine, and optional AI review through models you already operate.
+layers, and exportable diagrams. The wizard builds a preliminary deterministic
+draft. On the Recommendation page, an AI architect evaluates the use case and
+that draft using Sol at maximum supported reasoning (`xhigh`). Its structurally
+valid result is available immediately. **AI Review is optional:** the user can
+request an independent critique, read its findings, and choose whether to apply
+them. Review does not automatically discard or regenerate the architecture.
+The AI-authored report is authoritative; diagrams and exports render its graph.
+Models you already operate are required to generate a final recommendation.
 
 ## Azure deployment
 
@@ -32,8 +38,10 @@ running `azd up`; missing prerequisites stop deployment.
 - `Microsoft.Web` already registered in the target subscription.
 - An existing HTTPS Foundry/Azure OpenAI model-resource endpoint implementing
   `/openai/v1/chat/completions`.
-- Existing chat deployments compatible with the selected AI roles and response
-  format. Deployment names, not model catalog names, are required.
+- Existing wizard and Sol architecture deployments. The generator must support
+  `xhigh` reasoning and strict `json_schema` output. Configure an existing
+  reviewer deployment only if optional AI Review is wanted. Deployment names,
+  not model catalog names, are required.
 - A supported API key, or a pre-authorized user-assigned managed identity.
 - Network connectivity from your workstation for preflight and from App Service
   for the deployed application. Private-only endpoints require existing suitable

@@ -1,78 +1,167 @@
 import { NextResponse } from "next/server";
-import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak } from "@/lib/azure-openai";
+import { z } from "zod";
+import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak, reviewRecommendation, RecommendationFormatError } from "@/lib/azure-openai";
 import { PathfinderApimError } from "@/lib/pathfinder-apim";
 import { decide } from "@/lib/decision-engine";
 import { prepareDecisionInputForRecommendation } from "@/lib/summary-intake";
 import { authMode, requireAppAccess } from "@/lib/app-auth";
+import { AcceptedRecommendationSchema, DecisionInputSchema } from "@/lib/recommendation-contract";
+import type { AcceptedRecommendation } from "@/lib/recommendation-contract";
+import { AiProviderError, AiRoleConfigurationError } from "@/lib/ai-runtime";
+import type { GenerationFailure, RecommendationProgress, RecommendationStreamEvent } from "@/lib/recommendation-progress";
+
+const RequestSchema = z.object({
+  input: DecisionInputSchema,
+  operation: z.enum(["generate", "review"]).default("generate"),
+  userNotes: z.string().max(8000).optional(),
+  recommendationMode: z.enum(["fast", "deep"]).optional(),
+  previousRecommendation: AcceptedRecommendationSchema.optional()
+}).superRefine((request, context) => {
+  if (request.operation === "review" && !request.previousRecommendation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["previousRecommendation"], message: "Choose a generated architecture to review." });
+  }
+});
+
+function generationFailure(error: unknown): {
+  body: GenerationFailure & { correlationId?: string; retryAfterSeconds?: number };
+  status: number;
+  headers?: Record<string, string>;
+} {
+  if (error instanceof SyntaxError) return {
+    body: { error: "The request body must be valid JSON.", code: "INVALID_INPUT" }, status: 400
+  };
+  if (error instanceof RecommendationFormatError) {
+    console.error("[/api/tiebreak] Recommendation not accepted:", { code: error.code, issueCount: error.issues.length });
+    return { body: { error: error.message, code: error.code, issues: error.issues }, status: 422 };
+  }
+  console.error("[/api/tiebreak] Generation failed:", error instanceof Error ? error.message : String(error));
+  if (error instanceof AiRoleConfigurationError) return {
+    body: { error: error.message, code: error.code }, status: 503
+  };
+  if (error instanceof AiProviderError) return {
+    body: { error: error.message, code: error.code }, status: error.status === 429 ? 429 : 502
+  };
+  if (error instanceof PathfinderApimError) return {
+    body: {
+      error: error.status === 429 ? "AI generation is temporarily at capacity. Retry shortly." : "The AI provider could not complete the recommendation.",
+      code: error.code, correlationId: error.correlationId, retryAfterSeconds: error.retryAfterSeconds
+    },
+    status: error.status === 429 ? 429 : 502,
+    headers: error.retryAfterSeconds ? { "Retry-After": String(error.retryAfterSeconds) } : undefined
+  };
+  const timedOut = error instanceof Error && /AbortError|TimeoutError/.test(error.name);
+  return {
+    body: {
+      error: timedOut ? "The AI request timed out. Your previous architecture, if any, is unchanged." : "The AI request could not complete. Please retry.",
+      code: timedOut ? "AI_TIMEOUT" : "AI_GENERATION_FAILED"
+    },
+    status: timedOut ? 504 : 502
+  };
+}
+
+function streamRecommendation(
+  request: Request,
+  generate: (signal: AbortSignal, onProgress: (event: RecommendationProgress) => void) => Promise<AcceptedRecommendation>
+) {
+  const cancellation = new AbortController();
+  const signal = AbortSignal.any([request.signal, cancellation.signal]);
+  const encoder = new TextEncoder();
+  const started = Date.now();
+  let closed = false;
+  let dispose = () => {};
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      const finish = () => {
+        closed = true;
+        clearInterval(heartbeat);
+        signal.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        if (closed) return;
+        finish();
+        controller.error(signal.reason);
+      };
+      dispose = finish;
+      const emit = (event: RecommendationStreamEvent) => {
+        if (!closed) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) { onAbort(); return; }
+      heartbeat = setInterval(() => emit({ type: "heartbeat", elapsedMs: Date.now() - started }), 10_000);
+      void generate(signal, progress => emit({ type: "progress", progress })).then(report => {
+        if (closed) return;
+        clearInterval(heartbeat);
+        emit({ type: "result", report });
+        finish();
+        controller.close();
+      }).catch(error => {
+        if (closed) return;
+        clearInterval(heartbeat);
+        emit({ type: "error", ...generationFailure(error).body });
+        finish();
+        controller.close();
+      });
+    },
+    cancel(reason) {
+      dispose();
+      cancellation.abort(reason ?? new DOMException("Recommendation stream cancelled.", "AbortError"));
+    }
+  });
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
+      Vary: "Accept"
+    }
+  });
+}
 
 export async function GET(req: Request) {
   const denied = requireAppAccess(req);
   if (denied) return denied;
-  return NextResponse.json({
-    ...azureOpenAIStatus(),
-    authRefreshEnabled: authMode() === "entra" && process.env.AUTH_TOKEN_REFRESH_ENABLED === "true"
-  });
+  try {
+    return NextResponse.json({
+      ...azureOpenAIStatus(),
+      authRefreshEnabled: authMode() === "entra" && process.env.AUTH_TOKEN_REFRESH_ENABLED === "true"
+    });
+  } catch (error) {
+    console.error("[/api/tiebreak] Configuration unavailable:", error instanceof Error ? error.message : String(error));
+    return NextResponse.json({ error: "AI configuration could not be loaded.", code: "AI_CONFIGURATION_INVALID" }, { status: 503 });
+  }
 }
 
 export async function POST(req: Request) {
   const denied = requireAppAccess(req);
   if (denied) return denied;
-  if (!azureOpenAIEnabled()) {
-    return NextResponse.json(
-      { error: "Pathfinder APIM is not enabled.", status: azureOpenAIStatus() },
-      { status: 400 }
-    );
-  }
   try {
-    const body = await req.json();
-    if (!body?.input) {
-      return NextResponse.json({ error: "Missing input." }, { status: 400 });
-    }
-    // The server owns routing and guardrails. Legacy clients may still send a
-    // decision field, but it is never authoritative over the prepared profile.
-    const preparedInput = prepareDecisionInputForRecommendation(body.input);
-    const decision = decide(preparedInput);
-    const userNotes = typeof body?.userNotes === "string" ? body.userNotes : undefined;
-    const recommendationMode = body?.recommendationMode === "deep" ? "deep" : "fast";
-    const result = await tieBreak(preparedInput, decision, userNotes, {
-      recommendationMode,
-      reasoningEffort: "medium",
-      maxCompletionTokens: recommendationMode === "deep" ? 32768 : 24000,
-      // Forward the request's abort signal so that when the client disconnects
-      // (e.g. the user hits "Start over" mid-generation), the upstream model call
-      // is cancelled instead of running to completion and consuming capacity.
-      signal: req.signal
-    });
-    return NextResponse.json(result);
-  } catch (err: any) {
-    // A client-cancelled request (navigation / "Start over") is expected — don't
-    // treat it as a server error or emit noisy logs.
-    if (req.signal?.aborted || err?.name === "AbortError") {
-      return new NextResponse(null, { status: 499 });
-    }
-    const cause = err?.cause?.message ?? err?.cause?.code ?? "";
-    const msg = err?.message ?? "Tie-break failed.";
-    console.error("[/api/tiebreak] error:", msg, cause, err?.stack);
-    if (err instanceof PathfinderApimError) {
-      const headers: HeadersInit = {};
-      if (err.retryAfterSeconds) headers["Retry-After"] = String(err.retryAfterSeconds);
-      const isRateLimited = err.status === 429;
-      return NextResponse.json(
-        {
-          error: isRateLimited
-            ? "AI review is temporarily at capacity. Pathfinder is showing the deterministic recommendation."
-            : "AI review returned an unexpected upstream response. Pathfinder is showing the deterministic recommendation.",
-          status: err.status,
-          code: err.code,
-          correlationId: err.correlationId,
-          retryAfterSeconds: err.retryAfterSeconds
-        },
-        { status: isRateLimited ? 429 : 502, headers }
-      );
-    }
-    return NextResponse.json(
-      { error: cause ? `${msg} (cause: ${cause})` : msg },
-      { status: 500 }
+    if (!azureOpenAIEnabled()) return NextResponse.json(
+      { error: "AI recommendation generation is disabled.", code: "AI_DISABLED", status: { enabled: false } },
+      { status: 503 }
     );
+    const parsed = RequestSchema.safeParse(await req.json());
+    if (!parsed.success) return NextResponse.json({
+      error: "The use-case request is invalid.", code: "INVALID_INPUT",
+      issues: parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`)
+    }, { status: 400 });
+
+    const deterministicDraft = parsed.data.operation === "generate"
+      ? decide(prepareDecisionInputForRecommendation(parsed.data.input)) : undefined;
+    const mode = parsed.data.recommendationMode ?? "fast";
+    const generate = (signal: AbortSignal, onProgress?: (event: RecommendationProgress) => void) =>
+      parsed.data.operation === "review"
+        ? reviewRecommendation(parsed.data.input, parsed.data.previousRecommendation!, parsed.data.userNotes, { signal, onProgress })
+        : tieBreak(parsed.data.input, deterministicDraft!, parsed.data.userNotes, {
+      recommendationMode: mode,
+      previousRecommendation: parsed.data.previousRecommendation,
+      signal, onProgress
+    });
+    if (req.headers.get("accept")?.includes("application/x-ndjson")) return streamRecommendation(req, generate);
+    return NextResponse.json(await generate(req.signal), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    if (req.signal.aborted) return new NextResponse(null, { status: 499 });
+    const failure = generationFailure(error);
+    return NextResponse.json(failure.body, { status: failure.status, headers: failure.headers });
   }
 }

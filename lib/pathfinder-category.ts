@@ -1,6 +1,6 @@
 import type { ArchitectureDecision, DecisionInput } from "./types";
 import { lowConfidenceReason } from "./rules";
-import { architectureViewMermaid, buildArchitectureView } from "./architecture-view";
+import { architectureFlowMermaid, architectureViewMermaid, buildArchitectureView } from "./architecture-view";
 
 export type PathfinderCategory =
   | "Needs Clarification"
@@ -9,7 +9,7 @@ export type PathfinderCategory =
   | "Hybrid Copilot Studio + AI Foundry";
 
 export type CategoryInfo = {
-  category: PathfinderCategory;
+  category: string;
   description: string;
   badgeClass: string;
 };
@@ -38,6 +38,13 @@ const DESCRIPTIONS: Record<PathfinderCategory, string> = {
 };
 
 export function categoryForDecision(decision: ArchitectureDecision): CategoryInfo {
+  if (decision.authority === "ai") {
+    return {
+      category: decision.solutionType ?? decision.basePatternName,
+      description: decision.finalRecommendation,
+      badgeClass: "badge-info"
+    };
+  }
   const base = BASE_TO_CATEGORY[decision.basePatternId] ?? "AI Foundry";
   const hasFoundry = decision.overlays.some((o) => /foundry/i.test(o.id) || /foundry/i.test(o.name)) ||
     decision.overlays.some((o) => /model_customization/i.test(o.id)) ||
@@ -70,6 +77,7 @@ export function categoryForDecision(decision: ArchitectureDecision): CategoryInf
 }
 
 export function displayPatternName(decision: ArchitectureDecision): string {
+  if (decision.authority === "ai") return decision.basePatternName;
   if (decision.basePatternId === "m365_copilot_productivity") return "Microsoft 365 Copilot";
   return categoryForDecision(decision).category;
 }
@@ -87,6 +95,9 @@ function joinWithAnd(items: string[]): string {
 }
 
 export function describeConfidence(decision: ArchitectureDecision, input: DecisionInput): ConfidencePresentation {
+  if (decision.authority === "ai") return {
+    tone: decision.confidence, label: `AI confidence: ${decision.confidence}`, detail: decision.confidenceReason
+  };
   if (decision.confidence === "high") return { tone: "high", label: "Strong match" };
   if (decision.confidence === "medium") return { tone: "medium", label: "Good match" };
   const category = categoryForDecision(decision).category;
@@ -113,5 +124,9 @@ export function describeConfidence(decision: ArchitectureDecision, input: Decisi
 }
 
 export function buildMermaidDiagram(decision: ArchitectureDecision, input?: DecisionInput): string {
+  if (decision.authority === "ai") {
+    if (!decision.highLevelFlow) throw new Error("The AI recommendation has no authored high-level flow.");
+    return architectureFlowMermaid(decision.highLevelFlow);
+  }
   return architectureViewMermaid(buildArchitectureView(decision, input));
 }

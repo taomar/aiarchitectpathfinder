@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { EXAMPLES } from "../../lib/examples";
 import { decide } from "../../lib/decision-engine";
-import { buildArchitectureView } from "../../lib/architecture-view";
-import { availableDiagramFocuses, buildArchitectureLayout, type DiagramBox } from "../../lib/architecture-layout";
+import { buildArchitectureView, type ViewLayerId } from "../../lib/architecture-view";
+import { availableDiagramFocuses, buildArchitectureLayout, connectionStyle, type DiagramBox } from "../../lib/architecture-layout";
 import { renderArchitectureViewSvg } from "../../lib/architecture-svg";
+import { recommendationDecision } from "../../lib/recommendation-contract";
+import { acceptedFixture } from "./recommendation-fixture";
 
 function overlaps(a: DiagramBox, b: DiagramBox) {
   return a.x < b.x + b.width - 1 && a.x + a.width > b.x + 1 && a.y < b.y + b.height - 1 && a.y + a.height > b.y + 1;
@@ -11,8 +13,26 @@ function overlaps(a: DiagramBox, b: DiagramBox) {
 
 let diagrams = 0;
 let edges = 0;
-for (const example of EXAMPLES) {
-  const view = buildArchitectureView(decide(example.input), example.input);
+const cases = EXAMPLES.map(example => ({ id: example.id, view: buildArchitectureView(decide(example.input), example.input) }));
+cases.push({ id: "ai-authored-high-level-integration", view: buildArchitectureView(recommendationDecision(acceptedFixture())) });
+for (const layers of [
+  Array.from({ length: 12 }, () => "runtime" as const),
+  ["channels", "channels", "runtime", "runtime", "models", "grounding", "data", "data", "preparation", "identity", "security", "operations"] satisfies ViewLayerId[]
+]) {
+  const view = buildArchitectureView(recommendationDecision(acceptedFixture()));
+  const template = view.layers.flatMap(layer => layer.nodes)[0];
+  const nodes = layers.map((layer, index) => ({
+    ...template, id: `component-${index}`, label: `Logical component ${index + 1}`, layer, provider: "logical" as const
+  }));
+  view.layers = view.layers.map(layer => ({ ...layer, nodes: nodes.filter(node => node.layer === layer.id) }));
+  view.edges = [
+    ...nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id, label: "Authorized request", kind: "request" as const })),
+    ...nodes.slice(0, 7).map((node, index) => ({ from: node.id, to: nodes[(index + 4) % nodes.length].id, label: "Service dependency", kind: "policy" as const }))
+  ];
+  cases.push({ id: `ai-maximum-${new Set(layers).size}-layer-reference`, view });
+}
+for (const example of cases) {
+  const view = example.view;
   for (const focus of availableDiagramFocuses(view)) {
     const graph = buildArchitectureLayout(view, focus);
     assert.deepEqual(graph, buildArchitectureLayout(view, focus), "Layout must be deterministic.");
@@ -25,7 +45,7 @@ for (const example of EXAMPLES) {
       assert.ok(ids.has(connection.edge.from) && ids.has(connection.edge.to));
       assert.ok(connection.points.length >= 2);
       assert.ok(connection.points.every(point => Number.isFinite(point.x + point.y)));
-      assert.ok(graph.nodes.every(node => !overlaps({
+      assert.ok(graph.nodes.every(node => !overlaps(graph.highLevel ? connection.labelBox : {
         x: connection.labelPoint.x - 9, y: connection.labelPoint.y - 9, width: 18, height: 18
       }, node)), `${example.id}/${focus}: connection reference overlaps a service`);
     }
@@ -38,7 +58,28 @@ for (const example of EXAMPLES) {
     const svg = renderArchitectureViewSvg(view, new Map(), focus);
     assert.equal((svg.match(/data-connection-id=/g) ?? []).length, graph.connections.length);
     assert.equal((svg.match(/<polyline /g) ?? []).length, graph.connections.length);
-    assert.equal((svg.match(/marker-end="url\(#arrow-/g) ?? []).length, graph.connections.length + 5);
+    const legendItems = graph.highLevel ? new Set(graph.connections.map(connection => connectionStyle(connection.edge.kind).kind)).size : 5;
+    assert.equal((svg.match(/marker-end="url\(#arrow-/g) ?? []).length, graph.connections.length + legendItems);
+    if (graph.highLevel) {
+      assert.equal((svg.match(/data-connection-label=/g) ?? []).length, graph.connections.length);
+      assert.doesNotMatch(svg, /Connection references|data-flow-number|Open decisions \/ validation conditions/);
+      assert.ok(graph.groups.length <= 6);
+      if (focus === "overview") {
+        assert.equal(graph.layoutStyle, "stacked");
+        const bands = graph.groups.filter(group => group.id !== "cross-cutting");
+        assert.ok(bands.length > 0);
+        for (const [index, band] of bands.entries()) {
+          assert.equal(band.x, bands[0].x);
+          assert.equal(band.width, bands[0].width);
+          if (index) assert.ok(band.y > bands[index - 1].y + bands[index - 1].height, "Reference layers must be stacked vertically without overlap.");
+        }
+      }
+      for (const [index, connection] of graph.connections.entries()) {
+        for (const other of graph.connections.slice(index + 1)) {
+          assert.equal(overlaps(connection.labelBox, other.labelBox), false, `${example.id}/${focus}: inline relationship labels overlap`);
+        }
+      }
+    }
     assert.doesNotMatch(svg, /NaN|undefined/);
     diagrams++;
     edges += graph.connections.length;

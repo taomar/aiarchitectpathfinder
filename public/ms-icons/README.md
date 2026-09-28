@@ -1,4 +1,4 @@
-Official Microsoft architecture icon assets used by the deterministic architecture diagram.
+Official Microsoft architecture icon assets used by the AI-authored architecture and diagnostic diagrams.
 
 Sources:
 - Azure Architecture Icons: https://learn.microsoft.com/azure/architecture/icons/
@@ -17,3 +17,7 @@ icons come unmodified from Microsoft's July 2026 V24 icon set:
 https://arch-center.azureedge.net/icons/Azure_Public_Service_Icons_V24.zip.
 Generic client applications and logical capabilities use generic shapes, not
 unrelated Azure product icons.
+
+`azure/container-apps.svg` is the unmodified V24
+`Icons/other/02884-icon-service-Worker-Container-App.svg` resource icon.
+Container Apps must not use the distinct Container Instances icon.

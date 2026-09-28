@@ -56,10 +56,19 @@ if (-not [Uri]::TryCreate([string]$ai.PATHFINDER_FOUNDRY_ENDPOINT, [UriKind]::Ab
     $endpoint.Scheme -ne "https" -or $endpoint.UserInfo -or $endpoint.AbsolutePath -ne "/" -or $endpoint.Query -or $endpoint.Fragment) {
   throw "Supply the HTTPS Foundry/OpenAI model-resource root, not a project URL."
 }
-$deployments = @()
-foreach ($name in @("PATHFINDER_WIZARD_DEPLOYMENT", "PATHFINDER_ARCHITECTURE_DEPLOYMENT", "PATHFINDER_JUDGE_DEPLOYMENT")) {
+foreach ($name in @("PATHFINDER_WIZARD_DEPLOYMENT", "PATHFINDER_ARCHITECTURE_DEPLOYMENT")) {
   if ([string]::IsNullOrWhiteSpace($ai[$name])) { throw "APP_AI_SETTINGS must specify $name." }
-  $deployments += $ai[$name]
+}
+$roleChecks = @(
+  @{ Role = "wizard"; Deployment = $ai.PATHFINDER_WIZARD_DEPLOYMENT; Effort = "low"; Structured = $false },
+  @{ Role = "architecture"; Deployment = $ai.PATHFINDER_ARCHITECTURE_DEPLOYMENT; Effort = "xhigh"; Structured = $true }
+)
+if (-not [string]::IsNullOrWhiteSpace($ai["PATHFINDER_JUDGE_DEPLOYMENT"])) {
+  $reviewEffort = if ($ai["PATHFINDER_JUDGE_REASONING_EFFORT"]) { $ai["PATHFINDER_JUDGE_REASONING_EFFORT"] } else { "medium" }
+  if ($reviewEffort -notin @("low", "medium", "high", "xhigh")) { throw "The optional review reasoning effort is invalid." }
+  $roleChecks += @{ Role = "review"; Deployment = $ai.PATHFINDER_JUDGE_DEPLOYMENT; Effort = $reviewEffort; Structured = $true }
+} else {
+  Step "Optional AI review is not configured; generation and exports will remain available."
 }
 if ($ai.PATHFINDER_FOUNDRY_AUTH -eq "apiKey" -and [string]::IsNullOrWhiteSpace($ai.AZURE_OPENAI_API_KEY)) {
   throw "API-key mode requires AZURE_OPENAI_API_KEY in APP_AI_SETTINGS."
@@ -118,7 +127,7 @@ if ($env:AUTH_MODE -eq "entra") {
   }
 }
 
-Step "Checking existing model endpoint access with a synthetic request per distinct deployment."
+Step "Checking model access, response format and reasoning support for each configured role."
 $modelHeaders = @{ "Content-Type" = "application/json" }
 if ($ai.PATHFINDER_FOUNDRY_AUTH -eq "apiKey") {
   $modelHeaders["api-key"] = $ai.AZURE_OPENAI_API_KEY
@@ -129,21 +138,37 @@ if ($ai.PATHFINDER_FOUNDRY_AUTH -eq "apiKey") {
   $modelHeaders.Authorization = "Bearer $($access.accessToken)"
   Step "This pre-deployment call uses the operator credential, not the future host identity. Hosted identity access must also be checked after deployment."
 }
-foreach ($deployment in ($deployments | Select-Object -Unique)) {
-  Step "Checking configured deployment: $deployment"
+foreach ($check in $roleChecks) {
+  Step "Checking configured $($check.Role) deployment: $($check.Deployment), reasoning $($check.Effort)"
   $body = @{
-    model = $deployment
-    messages = @(@{ role = "user"; content = "Reply with the single word OK." })
-    max_completion_tokens = 1024
-  } | ConvertTo-Json -Depth 5
+    model = $check.Deployment
+    messages = @(@{ role = "user"; content = 'Return only JSON: {"ready":true}.' })
+    reasoning_effort = $check.Effort
+    max_completion_tokens = 2048
+    response_format = if ($check.Structured) {
+      @{
+        type = "json_schema"
+        json_schema = @{
+          name = "pathfinder_prerequisite"
+          strict = $true
+          schema = @{
+            type = "object"; properties = @{ ready = @{ type = "boolean" } }
+            required = @("ready"); additionalProperties = $false
+          }
+        }
+      }
+    } else { @{ type = "json_object" } }
+  } | ConvertTo-Json -Depth 10
   try {
     $response = Invoke-RestMethod -Method Post -Uri ($endpoint.AbsoluteUri.TrimEnd('/') + "/openai/v1/chat/completions") -Headers $modelHeaders -Body $body -TimeoutSec 90
   } catch {
-    throw "A model prerequisite check failed. Verify endpoint, deployment names, credentials, and network access. No resources were changed."
+    throw "The $($check.Role) model check failed. Verify its response-format/reasoning support, endpoint, credentials, and network access. No resources were changed."
   }
-  if (-not $response.choices -or [string]::IsNullOrWhiteSpace($response.choices[0].message.content)) {
+  if (-not $response.choices -or $response.choices[0].finish_reason -ne "stop" -or [string]::IsNullOrWhiteSpace($response.choices[0].message.content)) {
     throw "A configured deployment did not return a usable chat completion."
   }
+  try { $ready = $response.choices[0].message.content | ConvertFrom-Json -AsHashtable } catch { throw "A model prerequisite response was not valid JSON." }
+  if ($ready.ready -ne $true) { throw "A model prerequisite response did not confirm readiness." }
 }
 
 Step "Checking the exact resource change set without printing app-setting values."

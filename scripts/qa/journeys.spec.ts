@@ -55,10 +55,11 @@ for (const scenario of [
         expect(refined.notes).toContain(scenario.notes);
         outputs.push({ id: "refined-recommendation", kind: "actual refined API report, same input profile", content: refined.report });
       } else if (scenario.name === "hybrid document search") {
-        const deep = await reviewAfter(page, "deep-review", () =>
-          page.getByRole("button", { name: "Deep validate", exact: true }).click(), directory);
+        const deep = await reviewAfter(page, "optional-review", () =>
+          page.getByRole("button", { name: "AI Review (optional)", exact: true }).click(), directory);
         expect(deep.input).toEqual(initial.input);
-        outputs.push({ id: "deep-review", kind: "actual deep validation report", content: deep.report });
+        expect(deep.report.architectureGraph).toEqual(initial.report.architectureGraph);
+        outputs.push({ id: "optional-review", kind: "optional AI findings without architecture regeneration", content: deep.report });
       }
     } catch (error) {
       updateError = error;

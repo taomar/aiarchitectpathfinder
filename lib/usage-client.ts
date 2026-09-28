@@ -95,7 +95,7 @@ export function trackArchitectureOutput({
 }) {
   const resolvedSolutionType = solutionType || categoryForDecision(decision).category;
   const lowReason =
-    decision.confidence === "low"
+    decision.authority !== "ai" && decision.confidence === "low"
       ? lowConfidenceReason(input, decision.candidateBasePatternIds ?? [])?.code
       : undefined;
   trackUsageEvent({

@@ -1,209 +1,203 @@
 import assert from "node:assert/strict";
-import { aiRoleSettings, requestAiJson } from "../lib/ai-runtime";
-import { architectureIssues, tieBreak } from "../lib/azure-openai";
+import { z } from "zod";
+import { aiRoleSettings, aiRuntimeStatus, requestAiJson } from "../lib/ai-runtime";
+import { architectureIssues, tieBreak, reviewRecommendation, RecommendationFormatError } from "../lib/azure-openai";
 import { eliminateOptions } from "../lib/wizard-filter";
 import { decide } from "../lib/decision-engine";
-import { emptyInput, type TieBreakResponse, type WizardQuestion } from "../lib/types";
-import { applicableQuestions } from "../lib/questions";
-import { displayPatternName } from "../lib/pathfinder-category";
-import { isActionable, requiresOrchestration, wantsFabricDataAgent } from "../lib/rules";
+import { emptyInput, type WizardQuestion } from "../lib/types";
+import { recommendationFixture } from "./qa/recommendation-fixture";
+import { AiRecommendationSchema, AcceptedRecommendationSchema, recommendationDecision, recommendationContent } from "../lib/recommendation-contract";
+import { buildArchitectureView } from "../lib/architecture-view";
+import { buildArchitectureLayout } from "../lib/architecture-layout";
+import { buildMermaidDiagram, displayPatternName } from "../lib/pathfinder-category";
+import { modelOutputSchema } from "../lib/model-output-schema";
 
-const env = { ...process.env };
+const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
-const requests: Array<Record<string, unknown>> = [];
-let reply: (body: Record<string, unknown>) => unknown;
+type Completion = {
+  model: string; messages: Array<{ role: string; content: string }>;
+  reasoning_effort: string; response_format: { type: string; json_schema?: { strict: boolean } };
+};
+const requests: Completion[] = [];
+let reply: (body: Completion) => unknown;
 let finishReason = "stop";
 let status = 200;
-
-function fixture(summary: string) {
-  const input = {
-    ...emptyInput(), summary,
-    users: ["internal_employees" as const], channels: ["teams" as const],
-    capabilities: ["employee_assistant" as const], dataSources: ["sharepoint" as const],
-    behaviors: ["qa" as const], runtimePreferences: ["copilot_studio" as const],
-    advancedRagRequirements: ["none" as const], writeBackConfirmed: false
-  };
-  const decision = decide(input);
-  const report: TieBreakResponse = {
-    ...decision,
-    recommendedBasePatternId: decision.basePatternId,
-    recommendedOverlays: decision.overlays.map(item => item.id),
-    solutionType: displayPatternName(decision), displayPatternName: displayPatternName(decision),
-    finalRecommendation: "AI-authored recommendation for the employee handbook.",
-    useCaseTitle: "Employee handbook assistant",
-    useCaseSummary: summary,
-    proposedArchitectureSummary: "AI-authored customer architecture study. The solution answers handbook questions through the selected managed experience. Access is limited by the selected identity and permissions.",
-    rationale: ["AI explains why managed knowledge fits this workload."],
-    endToEndFlow: ["Employees ask a question.", "The managed experience retrieves permitted handbook content.", "The assistant returns an answer."],
-    reasoning: [], questionsToAskNext: [], mustNotInclude: []
-  };
-  return { input, decision, report };
-}
+const isJudge = (body: Completion) => body.messages[0].content.includes("independent solution-architecture reviewer");
+const input = {
+  ...emptyInput(), summary: "Employees need a read-only document assistant in a web application.",
+  users: ["internal_employees" as const], channels: ["web" as const],
+  capabilities: ["document_rag" as const], dataSources: ["documents" as const],
+  behaviors: ["qa" as const], writeBackConfirmed: false
+};
 
 async function main() {
   Object.assign(process.env, {
     NODE_ENV: "test", AZURE_OPENAI_ENABLED: "true",
-    PATHFINDER_LOCAL_AI_ENABLED: "true",
-    PATHFINDER_LOCAL_AI_ENDPOINT: "https://test-resource.openai.azure.com/",
-    PATHFINDER_WIZARD_DEPLOYMENT: "gpt-5.6-terra",
-    PATHFINDER_ARCHITECTURE_DEPLOYMENT: "gpt-5.6-sol",
-    PATHFINDER_JUDGE_DEPLOYMENT: "gpt-5.6-sol",
-    PATHFINDER_JUDGE_REASONING_EFFORT: "medium",
-    AZURE_OPENAI_API_KEY: "unit-test-only",
-    PATHFINDER_APIM_BASE_URL: "https://test-gateway.azure-api.net"
+    PATHFINDER_LOCAL_AI_ENABLED: "true", PATHFINDER_LOCAL_AI_ENDPOINT: "https://test-resource.openai.azure.com/",
+    PATHFINDER_WIZARD_DEPLOYMENT: "gpt-5.6-terra", PATHFINDER_ARCHITECTURE_DEPLOYMENT: "gpt-5.6-sol",
+    PATHFINDER_JUDGE_DEPLOYMENT: "gpt-5.6-sol", PATHFINDER_JUDGE_REASONING_EFFORT: "medium",
+    AZURE_OPENAI_API_KEY: "unit-test-only", PATHFINDER_APIM_BASE_URL: "https://test-gateway.azure-api.net"
   });
+  delete process.env.PATHFINDER_AI_MODE;
   delete process.env.WEBSITE_SITE_NAME;
   delete process.env.CONTAINER_APP_NAME;
   globalThis.fetch = async (url, init) => {
-    assert.match(String(url), /^https:\/\/test-resource\.openai\.azure\.com\/openai\/v1\/chat\/completions$/);
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    assert.equal(String(url), "https://test-resource.openai.azure.com/openai/v1/chat/completions");
+    const body: Completion = JSON.parse(String(init?.body));
+    assert.match(body.messages[0].content, /json/i);
     requests.push(body);
     return Response.json({
-      model: String(body.model), choices: [{
-        finish_reason: finishReason, message: { content: JSON.stringify(reply(body)) }
-      }]
+      model: body.model,
+      choices: [{ finish_reason: finishReason, message: { content: JSON.stringify(reply(body)) } }]
     }, { status });
   };
-  console.log("v7: local model roles and production transport boundary");
   assert.equal(aiRoleSettings("wizard").reasoningEffort, "low");
-  assert.equal(aiRoleSettings("architecture").reasoningEffort, "medium");
-  assert.equal(aiRoleSettings("judge").model, "gpt-5.6-sol");
+  assert.equal(aiRoleSettings("architecture").reasoningEffort, "xhigh");
+  assert.equal(aiRoleSettings("judge").reasoningEffort, "medium");
   Object.assign(process.env, { NODE_ENV: "production" });
   assert.equal(aiRoleSettings("architecture").transport, "apim");
-  Object.assign(process.env, { NODE_ENV: "test" });
-  process.env.WEBSITE_SITE_NAME = "hosted-app";
+  Object.assign(process.env, { NODE_ENV: "test", WEBSITE_SITE_NAME: "hosted-app" });
   assert.equal(aiRoleSettings("architecture").transport, "apim");
   delete process.env.WEBSITE_SITE_NAME;
-  process.env.PATHFINDER_LOCAL_AI_ENDPOINT = "https://invalid.example/";
-  assert.throws(() => aiRoleSettings("wizard"), /HTTPS Azure/);
-  process.env.PATHFINDER_LOCAL_AI_ENDPOINT = "https://test-resource.openai.azure.com/";
+  console.log("PASS Sol maximum generation, Terra low wizard, independent review settings and hosted APIM boundary");
 
-  console.log("v7: inherited deterministic rules remain intact");
-  const base = fixture("Employees ask handbook questions in Teams.");
-  assert.equal(wantsFabricDataAgent({ ...base.input, dataSources: ["fabric_lakehouse"], fabricAnalyticsIntent: "storage_only" }), false);
-  const coordination = { ...base.input, behaviors: ["multi_agent" as const], capabilities: ["multi_agent" as const] };
-  assert.equal(isActionable(coordination), false);
-  assert.equal(requiresOrchestration(coordination), true);
-  assert.ok(applicableQuestions(base.input).some(question => question.id === "advancedRagRequirements"));
-
-  console.log("v7: Terra wizard judgments are reviewed by Sol before hiding choices");
   const question: WizardQuestion = {
-    id: "capabilities", layer: "Intent", type: "multi", title: "What should it do?",
-    required: true, options: [{ id: "qa", label: "Answer" }, { id: "multi_agent", label: "Coordinate" }, { id: "unknown", label: "Not sure" }],
+    id: "capabilities", layer: "Intent", type: "multi", title: "What should it do?", required: true,
+    options: [{ id: "qa", label: "Answer" }, { id: "multi_agent", label: "Coordinate" }, { id: "unknown", label: "Not sure" }],
     read: () => ["qa"]
   };
   reply = body => body.model === "gpt-5.6-terra"
-    ? { eliminate: [{ id: "multi_agent", reason: "No writes" }], note: "", needsReview: true }
-    : { eliminate: [{ id: "qa", reason: "Already selected" }, { id: "unknown", reason: "Unknown" }], note: "Read-only coordination remains valid." };
-  const wizard = await eliminateOptions(coordination, question);
-  assert.deepEqual(wizard.eliminate, []);
-  assert.equal(requests.at(-2)?.model, "gpt-5.6-terra");
-  assert.equal(requests.at(-2)?.reasoning_effort, "low");
-  assert.equal(requests.at(-1)?.reasoning_effort, "medium");
-  status = 429;
-  await assert.rejects(() => eliminateOptions(coordination, question), /HTTP 429/);
-  status = 200;
+    ? { eliminate: [{ id: "multi_agent", reason: "Needs review" }], note: "", needsReview: true }
+    : { eliminate: [{ id: "qa", reason: "Selected" }, { id: "unknown", reason: "Unknown" }], note: "Keep choices available." };
+  assert.deepEqual((await eliminateOptions(input, question)).eliminate, []);
+  console.log("PASS wizard assistance still protects selected and unknown choices");
 
-  console.log("v7: structural checks reject missing controls, semantic review rejects invented claims");
-  assert.deepEqual(architectureIssues(base.report, base.decision), []);
-  const missing = structuredClone(base.report);
-  missing.recommendedStack = [];
-  assert.ok(architectureIssues(missing, base.decision).length > 0);
-  const withRecommendations = {
-    ...base.decision,
-    zeroTrust: { applicable: true, rationale: "Recommended safeguards; required controls are listed separately.", controls: ["Optional additional safeguard"] }
+  const content = recommendationFixture(input.summary);
+  const schema = modelOutputSchema("architecture_test", AiRecommendationSchema);
+  assert.throws(() => modelOutputSchema("unsupported", z.object({ date: z.date() })), /Unsupported/);
+  let properties = 0, depth = 0;
+  const inspect = (value: typeof schema.schema, level = 1) => {
+    if (value.type === "object") {
+      properties += Object.keys(value.properties).length;
+      depth = Math.max(depth, level);
+      assert.equal(value.additionalProperties, false);
+      assert.deepEqual(value.required, Object.keys(value.properties));
+      Object.values(value.properties).forEach(item => inspect(item, level + 1));
+    } else if (value.type === "array") {
+      depth = Math.max(depth, level);
+      inspect(value.items, level + 1);
+    }
+    assert.ok(!("maxLength" in value) && !("format" in value));
   };
-  const withoutOptional = {
-    ...base.report,
-    zeroTrust: { applicable: true, rationale: "Evaluate additional safeguards for this workload.", controls: [] }
+  inspect(schema.schema);
+  assert.ok(properties <= 100 && depth <= 5);
+  const draft = {
+    ...decide(input), basePatternId: "wrong-deterministic-route",
+    recommendedStack: ["WRONG_BASELINE_SERVICE"], blockedComponents: ["Azure AI Search"],
+    forbiddenUnlessConfirmed: ["Azure App Service"]
   };
-  assert.deepEqual(architectureIssues(withoutOptional, withRecommendations), [],
-    "Optional safeguards must not be promoted into mandatory implementation requirements.");
-  assert.ok(architectureIssues({ ...withoutOptional, securityControls: [] }, withRecommendations).length > 0,
-    "Required security controls must still be preserved.");
-  let reviews = 0;
-  let generations = 0;
+  assert.deepEqual(architectureIssues(content, draft), []);
+  const before = requests.length;
   reply = body => {
-    const system = (body.messages as Array<{ content: string }>)[0].content;
-    if (system.includes("independent AI architecture reviewer")) {
-      reviews++;
-      return { passed: reviews > 1, issues: reviews === 1 ? ["Clarify the permissions boundary."] : [] };
-    }
-    generations++;
-    return base.report;
+    assert.equal(isJudge(body), false, "Generation must not invoke the optional critic.");
+    assert.equal(body.reasoning_effort, "xhigh");
+    assert.equal(body.response_format.type, "json_schema");
+    assert.equal(body.response_format.json_schema?.strict, true);
+    const context = JSON.parse(body.messages[1].content);
+    assert.deepEqual(context.useCase, input);
+    assert.equal(context.deterministicDraft.basePatternId, draft.basePatternId);
+    return content;
   };
-  const result = await tieBreak(base.input, base.decision);
-  assert.equal(result.finalRecommendation, base.report.finalRecommendation);
-  assert.equal(result.aiValidated, true);
-  assert.equal(result.proposedArchitectureSummary, base.report.proposedArchitectureSummary);
-  assert.equal(reviews, 2);
-  assert.equal(generations, 2);
-  assert.ok(result.agentTrace?.some(item => item.agent === "Architecture Critic" && item.status === "passed"));
-  const count = requests.length;
-  assert.equal((await tieBreak(base.input, base.decision)).cacheHit, true);
-  assert.equal(requests.length, count);
-  process.env.PATHFINDER_JUDGE_REASONING_EFFORT = "high";
-  await tieBreak(base.input, base.decision);
-  assert.ok(requests.length > count, "Changing the judge policy must invalidate the cached result.");
-  process.env.PATHFINDER_JUDGE_REASONING_EFFORT = "medium";
+  const generated = await tieBreak(input, draft);
+  assert.equal(requests.length - before, 1);
+  assert.equal(generated.review.status, "not-requested");
+  assert.equal(generated.aiValidated, false);
+  assert.equal(generated.generation.reasoningEffort, "xhigh");
+  assert.deepEqual(generated.architectureGraph, content.architectureGraph);
+  assert.equal((await tieBreak(input, draft)).cacheHit, true);
+  assert.equal(requests.length - before, 1);
+  await tieBreak(input, draft, undefined, { recommendationMode: "deep" });
+  assert.equal(requests.length - before, 2);
+  console.log("PASS generation is one maximum-reasoning AI call, with no mandatory review or baseline veto");
 
-  console.log("v7: failed review and incomplete output never become a success-shaped report");
-  reply = body => (body.messages as Array<{ content: string }>)[0].content.includes("independent AI architecture reviewer")
-    ? { passed: false, issues: ["Unsupported semantic claim."] } : base.report;
-  await assert.rejects(() => tieBreak(base.input, base.decision, "Independent failing-review case"), /did not pass review/);
-  console.log("v7: hostile structural edits are rejected without relying on AI prose");
-  for (const mutation of [
-    { recommendedBasePatternId: "different-route" },
-    { recommendedOverlays: ["unauthorized-overlay"] },
-    { solutionType: "different-family" },
-    { architectureLayers: [] },
-    { recommendedStack: ["Direct LLM to SQL"] },
-    { securityControls: [] }
-  ]) {
-    const invalid = { ...structuredClone(base.report), ...mutation };
-    assert.ok(architectureIssues(invalid, base.decision).length > 0, JSON.stringify(mutation));
-  }
-  console.log("v7: all AI-authored semantic fields reach the independent reviewer");
-  for (const field of [
-    "finalRecommendation", "useCaseTitle", "useCaseSummary", "proposedArchitectureSummary",
-    "rationale", "endToEndFlow", "optionalAddOns", "riskFlags"
-  ] as const) {
-    const report = structuredClone(base.report);
-    const marker = `UNSUPPORTED_${field}`;
-    if (field === "rationale" || field === "endToEndFlow" || field === "optionalAddOns" || field === "riskFlags") {
-      report[field] = [marker];
-    } else {
-      report[field] = marker;
-    }
-    let sawMarker = false;
-    reply = body => {
-      const messages = body.messages as Array<{ content: string }>;
-      if (messages[0].content.includes("independent AI architecture reviewer")) {
-        sawMarker ||= messages[1].content.includes(marker);
-        return { passed: false, issues: ["Unsupported content in report."] };
-      }
-      return report;
-    };
-    await assert.rejects(() => tieBreak(base.input, base.decision, `Reject ${field}`), /did not pass review/);
-    assert.equal(sawMarker, true, `${field} was not submitted for semantic review`);
-  }
-  finishReason = "length";
-  await assert.rejects(() => requestAiJson("architecture", "Return JSON.", {}), /incomplete/);
-  finishReason = "stop";
-  const controller = new AbortController();
-  controller.abort();
-  // The real transport forwards cancellation; no provider fallback is allowed.
-  globalThis.fetch = async (_url, init) => {
-    assert.equal(init?.signal?.aborted, true);
-    init?.signal?.throwIfAborted();
-    throw new Error("Expected an aborted signal.");
+  const projected = recommendationDecision(generated);
+  const hostile = { ...emptyInput(), users: ["citizens" as const], channels: ["teams" as const], writeBackConfirmed: true };
+  assert.deepEqual(buildArchitectureView(projected, hostile), projected.approvedArchitecture);
+  assert.equal(displayPatternName(projected), generated.displayPatternName);
+  assert.equal(buildMermaidDiagram(projected, hostile), generated.mermaidDiagram);
+  const security = structuredClone(generated);
+  security.architectureGraph.nodes.push({
+    id: "source-policy", label: "Source access policy", layer: "security", provider: "logical", kind: "capability",
+    state: "selected", required: true, icon: "generic", detail: "AI-authored source policy.", controls: []
+  });
+  security.architectureGraph.edges.push({ from: "backend", to: "source-policy", label: "Source authorization policy", kind: "policy" });
+  assert.deepEqual(AcceptedRecommendationSchema.parse(security).architectureGraph, security.architectureGraph);
+  assert.ok(buildArchitectureLayout(buildArchitectureView(recommendationDecision(security))).nodes.some(node => node.node.id === "source-policy"));
+
+  const beforeReview = requests.length;
+  reply = body => {
+    assert.equal(isJudge(body), true, "An optional review must not regenerate the architecture.");
+    const context = JSON.parse(body.messages[1].content);
+    assert.equal(context.deterministicDraft, undefined);
+    assert.deepEqual(context.proposedRecommendation, content);
+    assert.equal(context.proposedRecommendation.aiValidated, undefined);
+    return { passed: false, issues: ["Clarify source authorization."], summary: "The proposal needs an authorization clarification." };
   };
-  await assert.rejects(() => requestAiJson("wizard", "Return JSON.", {}, { signal: controller.signal }));
-  console.log("PASS: v7 AI role, judgment, safety, cache and failure contracts");
+  const findings = await reviewRecommendation(input, generated);
+  assert.equal(requests.length - beforeReview, 1);
+  assert.equal(findings.review.status, "issues-found");
+  assert.equal(findings.aiValidated, false);
+  assert.deepEqual(recommendationContent(findings), content);
+  assert.deepEqual(findings.generation, generated.generation);
+  assert.equal(findings.mermaidDiagram, generated.mermaidDiagram);
+  assert.equal((await reviewRecommendation(input, generated)).cacheHit, true);
+  assert.equal(requests.length - beforeReview, 1);
+  assert.equal((await tieBreak(input, draft)).review.status, "not-requested", "Review metadata must not contaminate generation cache.");
+  reply = () => ({ passed: true, issues: [], summary: "The proposal meets the stated requirements." });
+  const passed = await reviewRecommendation(input, generated, "Review this confirmed intent.");
+  assert.equal(passed.review.status, "passed");
+  assert.equal(passed.aiValidated, true);
+  assert.deepEqual(recommendationContent(passed), content);
+  assert.throws(() => AcceptedRecommendationSchema.parse({ ...generated, aiValidated: true }));
+  console.log("PASS optional review exposes findings or approval without discarding, rewriting or falsely approving the generated result");
+
+  let repairs = 0;
+  const invalid = structuredClone(content);
+  invalid.serviceSizing[0].dev = "x".repeat(91);
+  reply = body => {
+    assert.equal(isJudge(body), false);
+    repairs++;
+    if (repairs === 1) return invalid;
+    assert.deepEqual(JSON.parse(body.messages[1].content).previousCandidate, invalid);
+    return content;
+  };
+  assert.equal((await tieBreak(input, draft, "Repair the output format")).review.status, "not-requested");
+  assert.equal(repairs, 2);
+  reply = () => invalid;
+  await assert.rejects(tieBreak(input, draft, "Still invalid"), RecommendationFormatError);
+
+  Object.assign(process.env, {
+    NODE_ENV: "production", PATHFINDER_AI_MODE: "external-foundry",
+    PATHFINDER_FOUNDRY_AUTH: "apiKey", PATHFINDER_FOUNDRY_ENDPOINT: "https://test-resource.openai.azure.com"
+  });
+  delete process.env.PATHFINDER_JUDGE_DEPLOYMENT;
+  assert.equal(aiRuntimeStatus().reviewAvailable, false);
+  reply = () => content;
+  assert.equal((await tieBreak(input, draft, "No reviewer is configured")).review.status, "not-requested");
+  await assert.rejects(reviewRecommendation(input, generated), /judge deployment/);
+  console.log("PASS structural repair stays bounded and a missing optional reviewer does not block generation");
+
+  finishReason = "length";
+  reply = () => ({});
+  await assert.rejects(requestAiJson("architecture", "Return JSON.", {}), /incomplete/);
+  finishReason = "stop";
+  status = 429;
+  await assert.rejects(requestAiJson("architecture", "Return JSON.", {}), /HTTP 429/);
+  console.log("PASS explicit provider failures remain visible without a deterministic replacement");
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   globalThis.fetch = originalFetch;
-  for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
-  Object.assign(process.env, env);
+  for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
+  Object.assign(process.env, originalEnv);
 });

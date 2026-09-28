@@ -1,15 +1,16 @@
 import type PptxGenJS from "pptxgenjs";
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse } from "./types";
 import { ARCHITECTURE_DISCLAIMER, buildArchitectureView, type ArchitectureView } from "./architecture-view";
-import { reportDetailSections, reportUseCaseSummary } from "./export";
+import { reportUseCaseSummary } from "./export";
 import { availableDiagramFocuses, buildArchitectureLayout, connectionStyle, type ArchitectureLayout } from "./architecture-layout";
+import { AcceptedRecommendationSchema, recommendationDecision, recommendationReviewLabel, type AcceptedRecommendation } from "./recommendation-contract";
 
 /*
  * THESIS: An architecture decision story, not a document squeezed into slide boxes.
  * WORLD: Microsoft mark, white space, deep navy, Azure blue, Aptos, editable diagrams.
  * STORY: Understand the direction, trace the boundaries, identify required review.
  * OPENING: Large left-aligned headline; a restrained architecture motif on the right.
- * FORM: Executive narrative followed by the same repeatable layers and a lossless appendix.
+ * FORM: At most 15 slides: decision, connected views, service-sizing table, and review gates.
  */
 
 type Slide = ReturnType<PptxGenJS["addSlide"]>;
@@ -26,6 +27,8 @@ export type PowerPointDetails = {
 const C = { ink: "122A43", navy: "0B2B4A", blue: "0078D4", pale: "F1F6FB", line: "D5E0EB", muted: "50657A", amber: "805B13", amberFill: "FFF4D8" };
 const W = 13.333333;
 const H = 7.5;
+export const MAX_POWERPOINT_SLIDES = 15;
+export const SERVICE_ROWS_PER_SLIDE = 4;
 const deckState = new WeakMap<PptxGenJS, { page: number; assets?: PowerPointAssets }>();
 const clean = (items: string[]) => [...new Set(items.map(item => item.trim()).filter(Boolean))];
 
@@ -88,6 +91,7 @@ function logo(pptx: PptxGenJS, slide: Slide, x: number, y: number, w: number) {
 
 function frame(pptx: PptxGenJS, title: string, section: string, dark = false) {
   const state = deckState.get(pptx) ?? { page: 0 };
+  if (state.page >= MAX_POWERPOINT_SLIDES) throw new Error("The presentation exceeded its 15-slide budget.");
   state.page++;
   deckState.set(pptx, state);
   const slide = pptx.addSlide();
@@ -99,32 +103,11 @@ function frame(pptx: PptxGenJS, title: string, section: string, dark = false) {
   slide.addShape(pptx.ShapeType.line, { x: 0.65, y: 6.94, w: 12.02, h: 0, line: { color: dark ? "45627D" : C.line, width: 0.7 } });
   text(slide, ARCHITECTURE_DISCLAIMER, 0.65, 7.04, 11.6, 0.27, 12, { color: dark ? "DBE8F4" : C.muted });
   text(slide, String(state.page).padStart(2, "0"), 12.25, 7.04, 0.42, 0.25, 11, { align: "right", color: dark ? "DBE8F4" : C.muted });
-  slide.addNotes(`${ARCHITECTURE_DISCLAIMER}\nThis is planning guidance, not confirmation of a deployed environment or Microsoft approval.`);
   return slide;
 }
 
 function sentence(value: string) {
   return value.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/)[0] ?? "";
-}
-
-function paginate(value: string, chars = 111, lines = 19) {
-  const wrapped = wrapSlideText(value, chars);
-  const result: string[] = [];
-  for (let i = 0; i < wrapped.length; i += lines) {
-    const page = wrapped.slice(i, i + lines).join("\n").trim();
-    if (page) result.push(page);
-  }
-  return result;
-}
-
-function prosePages(pptx: PptxGenJS, title: string, value: string, section: string, size = 20) {
-  const chars = size >= 20 ? 80 : 118;
-  const lines = size >= 20 ? 13 : 18;
-  const pages = paginate(value, chars, lines);
-  pages.forEach((page, index) => {
-    const slide = frame(pptx, pages.length > 1 ? `${title} · ${index + 1}/${pages.length}` : title, section);
-    text(slide, page, 0.82, 1.91, 11.62, 4.88, size, { lineSpacingMultiple: 1.12 });
-  });
 }
 
 function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: ArchitectureView) {
@@ -137,12 +120,13 @@ function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: Architectur
   const title = details.tieBreak?.useCaseTitle?.trim() || "Your proposed architecture";
   text(slide, wrapSlideText(title, 31).join("\n"), 0.69, 2.0, 7.72, 2.15, 39, { bold: true, fontFace: "Aptos Display" });
   const overview = sentence(reportUseCaseSummary(details.input, details.decision, details.tieBreak));
-  const summaryLines = wrapSlideText(overview, 67);
-  if (summaryLines.length <= 5) text(slide, summaryLines.join("\n"), 0.72, 4.42, 7.6, 1.42, 20, { color: C.muted });
-  else text(slide, details.solutionType || "Architecture recommendation", 0.72, 4.46, 7.6, 1.05, 28, { color: C.blue, bold: true });
+  const summaryLines = wrapSlideText(overview, 45);
+  const coverSummary = summaryLines.length <= 4 ? summaryLines
+    : wrapSlideText(details.tieBreak?.highLevelFlow?.at(-1) || details.tieBreak?.useCaseTitle || "Proposed architecture", 45);
+  text(slide, coverSummary.join("\n"), 0.72, 4.42, 7.6, 1.42, 20, { color: C.muted });
   rect(pptx, slide, 0.7, 6.25, 7.65, 0.76, C.amberFill);
-  text(slide, ARCHITECTURE_DISCLAIMER, 0.9, 6.42, 7.23, 0.44, 14.5, { color: C.amber, bold: true });
-  text(slide, "A clear path from\nneed to design", 9.58, 1.22, 3.15, 1.2, 26, { color: "FFFFFF", bold: true });
+  text(slide, ARCHITECTURE_DISCLAIMER, 0.9, 6.37, 7.23, 0.54, 14.5, { color: C.amber, bold: true });
+  text(slide, "Proposed\narchitecture", 9.58, 1.22, 3.15, 1.2, 26, { color: "FFFFFF", bold: true });
   const groups = [
     { title: "Experience", layer: "channels" },
     { title: "Intelligence", layer: "runtime" },
@@ -155,29 +139,31 @@ function addCover(pptx: PptxGenJS, details: PowerPointDetails, view: Architectur
     text(slide, group.title, 10.07, y - 0.11, 2.45, 0.25, 12, { color: "ABCBE6" });
     text(slide, wrapSlideText(name, 26).join("\n"), 10.07, y + 0.22, 2.5, 0.66, 18, { color: "FFFFFF", bold: true });
   });
+  if (details.tieBreak?.review) text(slide, recommendationReviewLabel(details.tieBreak.review), 9.57, 6.29, 3.05, 0.34, 11.5, { color: "C9DCEE" });
   text(slide, "Proposed design · review before implementation", 9.57, 6.71, 3.05, 0.45, 11.5, { color: "C9DCEE" });
-  slide.addNotes(ARCHITECTURE_DISCLAIMER);
 }
 
 function addDecision(pptx: PptxGenJS, details: PowerPointDetails, view: ArchitectureView) {
   const slide = frame(pptx, "The recommended direction", "Decision");
   const family = details.solutionType || view.title;
-  text(slide, wrapSlideText(family, 25).join("\n"), 0.77, 1.88, 7.2, 1.42, 35, { color: C.blue, bold: true });
+  text(slide, wrapSlideText(family, 30).join("\n"), 0.77, 1.88, 7.2, 1.85, 35, { color: C.blue, bold: true });
   const rationale = sentence(details.decision.rationale[0] || details.decision.finalRecommendation);
-  const rationaleLines = wrapSlideText(rationale, 56);
-  text(slide, rationaleLines.length <= 7 ? rationaleLines.join("\n") : "The following pages explain the architecture, component responsibilities, source boundaries and validation conditions.",
-    0.79, 3.55, 7.02, 2.5, 21, { color: C.ink });
-  slide.addShape(pptx.ShapeType.line, { x: 8.57, y: 1.96, w: 0, h: 4.17, line: { color: C.line, width: 1 } });
+  const rationaleLines = wrapSlideText(rationale, 45);
+  const decisionRationale = rationaleLines.length <= 3 ? rationaleLines
+    : wrapSlideText(details.tieBreak?.highLevelFlow?.at(-1) || "Confirm the requirements before implementation.", 45);
+  text(slide, decisionRationale.join("\n"), 0.79, 3.95, 7.02, 1.45, 21, { color: C.ink });
+  slide.addShape(pptx.ShapeType.line, { x: 8.57, y: 1.96, w: 0, h: 3.4, line: { color: C.line, width: 1 } });
   const facts = [
     ["Audience", view.audience.length > 3 ? "Multiple selected audiences" : view.audience.join(", ") || "To be confirmed"],
-    ["Channels", view.layers.find(layer => layer.id === "channels")!.nodes.length > 3 ? "Multiple selected channels" : view.layers.find(layer => layer.id === "channels")?.nodes.map(node => node.label).join(", ") || "Confirm the entry experience"],
-    ["Action boundary", view.actionBoundary]
+    ["Channels", view.layers.find(layer => layer.id === "channels")!.nodes.length > 3 ? "Multiple selected channels" : view.layers.find(layer => layer.id === "channels")?.nodes.map(node => node.label).join(", ") || "Confirm the entry experience"]
   ];
   facts.forEach(([label, value], index) => {
     const y = 2.0 + index * 1.42;
     text(slide, label, 9.0, y, 3.05, 0.28, 13, { color: C.muted });
     text(slide, wrapSlideText(value, 28).join("\n"), 9.0, y + 0.4, 3.05, 0.85, 19, { bold: true });
   });
+  text(slide, "Action boundary", 0.79, 5.68, 11.5, 0.23, 13, { color: C.muted });
+  text(slide, wrapSlideText(view.actionBoundary, 95).join("\n"), 0.79, 6.03, 11.7, 0.66, 16, { bold: true });
 }
 
 export function addArchitectureBlueprintSlide(pptx: PptxGenJS, details: {
@@ -187,26 +173,25 @@ export function addArchitectureBlueprintSlide(pptx: PptxGenJS, details: {
   const view = buildArchitectureView(details.decision, details.input);
   const overview = buildArchitectureLayout(view);
   if (!overview.nodes.length) {
-    prosePages(pptx, "Confirm the architecture inputs", details.decision.finalRecommendation, "Architecture");
+    const slide = frame(pptx, "Architecture decisions to confirm", "AI recommendation");
+    text(slide, "The AI requested clarification before defining the connected architecture.", 0.85, 2.1, 11.5, 1.0, 24);
     return;
   }
-  const focuses = overview.nodes.length > 7 ? availableDiagramFocuses(view) : ["overview"] as const;
+  const available = availableDiagramFocuses(view);
+  const detailsOrder = (["data", "preparation", "request", "models"] as const).filter(focus => available.includes(focus));
+  const needsDetail = overview.nodes.length > 7 ||
+    Math.min(12.04 / overview.width, 4.9 / overview.height) * 18 * 72 < 12;
+  const focuses = needsDetail ? ["overview" as const, ...detailsOrder.slice(0, 2)] : ["overview" as const];
   for (const focus of focuses) {
     const graph = focus === "overview" ? overview : buildArchitectureLayout(view, focus);
-    const slide = frame(pptx, graph.title, focus === "overview" && overview.nodes.length > 7
+    const slide = frame(pptx, graph.title, focus === "overview" && needsDetail
       ? "Topology overview · readable detail views follow" : "Connected architecture");
     addConnectedDiagram(pptx, slide, graph);
-    const references = graph.connections.map(connection => {
-      const from = graph.nodes.find(item => item.node.id === connection.edge.from)!.node.label;
-      const to = graph.nodes.find(item => item.node.id === connection.edge.to)!.node.label;
-      return `${connection.number}. ${from} → ${to}: ${connection.edge.label}`;
-    });
-    slide.addNotes(references.join("\n"));
   }
 }
 
 function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureLayout) {
-  const box = { x: 0.64, y: 1.88, width: 12.04, height: 4.18 };
+  const box = { x: 0.64, y: 1.88, width: 12.04, height: graph.highLevel ? 4.9 : 4.18 };
   const scale = Math.min(box.width / graph.width, box.height / graph.height);
   const left = box.x + (box.width - graph.width * scale) / 2;
   const top = box.y + (box.height - graph.height * scale) / 2;
@@ -214,8 +199,10 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
   const py = (value: number) => top + value * scale;
   const font = (value: number) => value * scale * 72;
   for (const group of graph.groups) {
-    rect(pptx, slide, px(group.x), py(group.y), group.width * scale, group.height * scale, group.fill, "ADBECE");
-    text(slide, group.title, px(group.x + 10), py(group.y + 5), (group.width - 20) * scale, 19 * scale, font(13), { bold: true, color: "274962" });
+    rect(pptx, slide, px(group.x), py(group.y), group.width * scale, group.height * scale, group.fill, graph.highLevel ? "6B8FAE" : "ADBECE");
+    const stacked = graph.layoutStyle === "stacked";
+    text(slide, group.title, px(group.x + (stacked ? 18 : 10)), py(group.y + (stacked ? 10 : 5)),
+      (group.width - 36) * scale, (stacked ? 27 : 19) * scale, font(stacked ? 18 : 13), { bold: true, color: "274962" });
   }
   for (const connection of graph.connections) {
     const style = connectionStyle(connection.edge.kind);
@@ -239,13 +226,17 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
   for (const placed of graph.nodes) {
     const node = placed.node;
     const pending = node.state === "confirm" || !node.required;
-    rect(pptx, slide, px(placed.x), py(placed.y), placed.width * scale, placed.height * scale, "FFFFFF", pending ? "AF8025" : "B8C8D7");
+    if (graph.layoutStyle !== "stacked" || pending) rect(pptx, slide, px(placed.x), py(placed.y), placed.width * scale, placed.height * scale, "FFFFFF", pending ? "AF8025" : "B8C8D7");
     const image = deckState.get(pptx)?.assets?.icons?.[node.id];
-    if (image) slide.addImage({ data: image, x: px(placed.x + placed.width / 2 - 22), y: py(placed.y + 16), w: 44 * scale, h: 44 * scale });
+    const iconSize = graph.highLevel ? 48 : 44;
+    if (image) slide.addImage({ data: image, x: px(placed.x + placed.width / 2 - iconSize / 2), y: py(placed.y + 16), w: iconSize * scale, h: iconSize * scale });
     else {
       const cx = placed.x + placed.width / 2;
       const cy = placed.y + 38;
-      if (placed.glyph === "phone") {
+      if (placed.glyph === "person") {
+        slide.addShape(pptx.ShapeType.ellipse, { x: px(cx - 8), y: py(cy - 24), w: 16 * scale, h: 16 * scale, fill: { color: "E5F0F9" }, line: { color: "365875", width: 1 } });
+        slide.addShape(pptx.ShapeType.roundRect, { x: px(cx - 16), y: py(cy - 3), w: 32 * scale, h: 30 * scale, fill: { color: "E5F0F9" }, line: { color: "365875", width: 1 } });
+      } else if (placed.glyph === "phone") {
         rect(pptx, slide, px(cx - 13), py(cy - 23), 26 * scale, 45 * scale, "F2F6FA", "55758F");
         slide.addShape(pptx.ShapeType.line, { x: px(cx - 7), y: py(cy - 17), w: 14 * scale, h: 0, line: { color: "55758F", width: 0.8 } });
         slide.addShape(pptx.ShapeType.ellipse, { x: px(cx - 2), y: py(cy + 14), w: 4 * scale, h: 4 * scale, fill: { color: "55758F" }, line: { color: "55758F" } });
@@ -255,10 +246,19 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
         text(slide, symbol, px(cx - 25), py(cy - 18), 50 * scale, 35 * scale, font(13), { bold: true, align: "center", valign: "middle", color: "365875" });
       }
     }
-    text(slide, placed.labelLines.join("\n"), px(placed.x + 8), py(placed.y + 68), (placed.width - 16) * scale, placed.labelLines.length * 22 * scale, font(16), { bold: true, align: "center" });
+    text(slide, placed.labelLines.join("\n"), px(placed.x + 8), py(placed.y + (graph.highLevel ? 77 : 68)),
+      (placed.width - 16) * scale, placed.labelLines.length * (graph.highLevel ? 25 : 22) * scale,
+      font(graph.highLevel ? 18 : 16), { bold: true, align: "center" });
     text(slide, placed.caption, px(placed.x + 5), py(placed.y + placed.height - 21), (placed.width - 10) * scale, 16 * scale, font(10), { color: pending ? C.amber : C.muted, align: "center" });
   }
   for (const connection of graph.connections) {
+    if (graph.highLevel) {
+      const label = connection.labelBox;
+      rect(pptx, slide, px(label.x), py(label.y), label.width * scale, label.height * scale, "FFFFFF");
+      text(slide, connection.labelLines.join("\n"), px(label.x), py(label.y + 4), label.width * scale,
+        (label.height - 4) * scale, font(14), { align: "center", color: connectionStyle(connection.edge.kind).color });
+      continue;
+    }
     const size = 24 * scale;
     slide.addShape(pptx.ShapeType.ellipse, {
       x: px(connection.labelPoint.x) - size / 2, y: py(connection.labelPoint.y) - size / 2,
@@ -267,72 +267,98 @@ function addConnectedDiagram(pptx: PptxGenJS, slide: Slide, graph: ArchitectureL
     text(slide, String(connection.number), px(connection.labelPoint.x) - size / 2, py(connection.labelPoint.y) - size / 2,
       size, size, font(12), { bold: true, align: "center", valign: "middle", color: connectionStyle(connection.edge.kind).color });
   }
-  const visibleLabels = graph.connections.slice(0, 8);
+  const visibleLabels = graph.highLevel ? [] : graph.connections.slice(0, 12);
   visibleLabels.forEach((connection, index) => {
-    text(slide, `${connection.number}. ${connection.shortLabel}`, 0.72 + index % 4 * 3.08, 6.24 + Math.floor(index / 4) * 0.25,
+    text(slide, `${connection.number}. ${connection.shortLabel}`, 0.72 + index % 4 * 3.08, 6.12 + Math.floor(index / 4) * 0.24,
       2.95, 0.22, 10.5, { color: connectionStyle(connection.edge.kind).color });
   });
-  if (graph.connections.length > 8) {
-    text(slide, "All connection references: speaker notes and source-boundary appendix.", 0.72, 6.77, 11.8, 0.15, 9, { color: C.muted });
+}
+
+function conciseItems(items: string[], maximum = 6) {
+  return clean(items).flatMap(item => {
+    const sentences = item.split(/(?<=[.!?])\s+/);
+    return sentences.filter(value => value.trim().length <= 240).slice(0, 1);
+  }).slice(0, maximum);
+}
+
+function addServiceSizing(pptx: PptxGenJS, report: AcceptedRecommendation) {
+  const services = [...report.serviceSizing].sort((left, right) =>
+    Number(right.provider === "azure") - Number(left.provider === "azure") || left.name.localeCompare(right.name));
+  const title = services.some(service => service.provider === "azure")
+    ? "Azure services & environment sizing" : "Services & environment sizing";
+  if (!services.length) {
+    const slide = frame(pptx, title, "AI-proposed configuration");
+    text(slide, "Service sizing needs clarification before implementation.", 0.85, 2.1, 11.5, 0.9, 24);
+    return;
+  }
+  for (let offset = 0; offset < services.length; offset += SERVICE_ROWS_PER_SLIDE) {
+    const page = services.slice(offset, offset + SERVICE_ROWS_PER_SLIDE);
+    const slide = frame(pptx, title, `Proposed starting configuration · ${Math.floor(offset / SERVICE_ROWS_PER_SLIDE) + 1}/${Math.ceil(services.length / SERVICE_ROWS_PER_SLIDE)}`);
+    const header = ["Service", "Purpose", "Dev", "Test", "Prod"].map(value => ({
+      text: value, options: { bold: true, color: "FFFFFF", fill: { color: C.navy } }
+    }));
+    const rows: PptxGenJS.TableRow[] = [header, ...page.map((service, index) => [
+      `${service.name}\n${service.provider === "azure" ? "Azure" : service.provider === "microsoft-saas" ? "Microsoft SaaS" : service.provider === "logical" ? "Logical capability" : "External dependency"}`,
+      service.purpose, service.dev, service.test, service.prod
+    ].map(value => ({
+      text: wrapSlideText(value, 27).join("\n"),
+      options: { fill: { color: index % 2 ? "FFFFFF" : C.pale }, color: C.ink }
+    })))];
+    slide.addTable(rows, {
+      x: 0.68, y: 1.92, w: 12.0,
+      colW: [2.35, 2.15, 2.5, 2.5, 2.5],
+      rowH: [0.46, ...page.map(() => 1.02)],
+      fontFace: "Aptos", fontSize: 13, margin: [5, 3, 5, 3], valign: "top",
+      border: { type: "solid", color: C.line, pt: 0.8 },
+      autoPage: false
+    });
+    text(slide, "Sizing is proposed, not measured. Confirm load, tokens, corpus, region and service limits.", 0.75, 6.66, 11.85, 0.23, 11, { color: C.muted });
   }
 }
 
-function addReview(pptx: PptxGenJS, details: PowerPointDetails, view: ArchitectureView) {
-  const considerations = clean([
-    ...view.decisions,
-    ...details.decision.missingQuestions.map(question => question.title),
-    ...(details.tieBreak?.questionsToAskNext ?? []),
-    ...details.decision.riskFlags, ...(details.tieBreak?.riskFlags ?? [])
-  ]);
-  const selected = considerations.slice(0, 3);
-  if (selected.length) prosePages(pptx, "Resolve these points before implementation",
-    selected.map((item, index) => `${index + 1}. ${item}`).join("\n\n"), "Review");
-  const slide = frame(pptx, "This is a design proposal—not a sign-off", "Required review", true);
-  text(slide, "Review and validate\nbefore implementation.", 0.83, 2.02, 11.55, 1.52, 36, { color: "FFFFFF", bold: true });
-  const gates = [
-    ["Architecture", "Confirm scope, responsibilities, selected components and integration boundaries."],
-    ["Security & data", "Confirm identity, source permissions, action authority, privacy and compliance."],
-    ["Delivery readiness", "Validate quality, service availability, capacity, cost and operational support."]
-  ];
-  gates.forEach(([title, body], index) => {
-    const x = 0.86 + index * 4.13;
-    text(slide, title, x, 4.25, 3.63, 0.36, 21, { color: "FFFFFF", bold: true });
-    text(slide, wrapSlideText(body, 37).join("\n"), x, 4.91, 3.56, 1.17, 17, { color: "D6E5F2" });
+function addFinalConditions(pptx: PptxGenJS, report: AcceptedRecommendation) {
+  const controls = conciseItems(report.securityControls, 6);
+  const controlSlide = frame(pptx, "Security & delivery boundaries", "AI recommendation");
+  controls.forEach((value, index) => {
+    const x = index % 2 ? 6.85 : 0.84;
+    const y = 2.02 + Math.floor(index / 2) * 1.5;
+    text(controlSlide, wrapSlideText(value, 47).join("\n"), x, y, 5.55, 1.24, 18);
   });
-}
-
-export function addReportDetailsSlides(pptx: PptxGenJS, details: PowerPointDetails) {
-  prosePages(pptx, "Complete architecture narrative", details.architectureSummary, "Technical appendix", 14);
-  for (const section of reportDetailSections(details.input, details.decision, details.tieBreak, details.refinement)) {
-    prosePages(pptx, section.title, section.items.join("\n\n"), "Technical appendix", 14);
-  }
+  if (!controls.length) text(controlSlide, "Security requirements must be confirmed before implementation.", 0.84, 2.1, 11.4, 1, 24);
+  const conditions = conciseItems([...report.sizingAssumptions, ...report.questionsToAskNext, ...report.riskFlags], 6);
+  const finalSlide = frame(pptx, "Confirm before implementation", "Sizing and review");
+  if (report.review.status === "issues-found") text(finalSlide,
+    `${report.review.issues.length} unresolved AI review findings. Read the full findings on the Recommendation page.`,
+    0.84, 1.72, 11.6, 0.23, 11, { color: C.amber, bold: true });
+  conditions.forEach((value, index) => {
+    const x = index % 2 ? 6.85 : 0.84;
+    const y = 2.02 + Math.floor(index / 2) * 1.5;
+    text(finalSlide, wrapSlideText(value, 47).join("\n"), x, y, 5.55, 1.24, 18);
+  });
 }
 
 export function buildPowerPoint(pptx: PptxGenJS, details: PowerPointDetails, assets: PowerPointAssets) {
   if (!assets.logo.startsWith("data:image/png;base64,")) throw new Error("The Microsoft logo must be loaded before exporting.");
+  const report = AcceptedRecommendationSchema.parse(details.tieBreak);
+  const approved: PowerPointDetails = {
+    ...details, decision: recommendationDecision(report), tieBreak: report,
+    architectureSummary: report.proposedArchitectureSummary, solutionType: report.solutionType
+  };
   deckState.set(pptx, { page: 0, assets });
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "Architecture Pathfinder";
   pptx.company = "Architecture Pathfinder";
-  pptx.title = details.tieBreak?.useCaseTitle?.trim() || "Suggested architecture";
+  pptx.title = report.useCaseTitle;
   pptx.subject = ARCHITECTURE_DISCLAIMER;
   pptx.theme = { headFontFace: "Aptos Display", bodyFontFace: "Aptos" };
-  const view = buildArchitectureView(details.decision, details.input);
-  addCover(pptx, details, view);
-  addDecision(pptx, details, view);
-  prosePages(pptx, "Why this architecture fits", details.architectureSummary.split(/\n\s*\n/)[0], "Recommendation", 20);
+  const view = buildArchitectureView(approved.decision, approved.input);
+  addCover(pptx, approved, view);
+  addDecision(pptx, approved, view);
   addArchitectureBlueprintSlide(pptx, {
-    ...details, useCaseSummary: reportUseCaseSummary(details.input, details.decision, details.tieBreak),
-    solutionType: details.solutionType || view.title, displayPattern: details.solutionType || view.title
+    ...approved, useCaseSummary: report.useCaseSummary,
+    solutionType: report.solutionType, displayPattern: report.displayPatternName
   });
-  addReview(pptx, details, view);
-  const divider = frame(pptx, "Technical appendix", "Complete source detail", true);
-  text(divider, "The full design record,\nwithout clipped sentences.", 0.86, 2.36, 11.4, 1.8, 38, { bold: true, color: "FFFFFF" });
-  text(divider, "Inputs · components · controls · conditions · review notes", 0.89, 4.77, 11.4, 0.7, 22, { color: "C9DCEE" });
-  addReportDetailsSlides(pptx, details);
-  const names = new Map(view.layers.flatMap(layer => layer.nodes).map(node => [node.id, node.label]));
-  prosePages(pptx, "Source-boundary register", view.edges.map(edge =>
-    `${names.get(edge.from)} ${edge.kind === "conditional" ? "···" : "→"} ${names.get(edge.to)}\n${edge.kind === "conditional" ? "Confirmation required: " : ""}${edge.label}`
-  ).join("\n\n"), "Technical appendix", 14);
+  addServiceSizing(pptx, report);
+  addFinalConditions(pptx, report);
   return { slides: deckState.get(pptx)!.page, model: view };
 }

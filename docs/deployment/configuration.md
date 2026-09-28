@@ -51,6 +51,17 @@ Replace every placeholder. The three roles can reference the same existing
 deployment if it supports their required behavior. The endpoint is the model
 resource root, not a Foundry project URL. No model is deployed by this project.
 
+The architecture role uses **maximum reasoning (`xhigh`)** and strict
+`json_schema` structured outputs. Point it at an existing Sol deployment that
+supports those settings. `max` is a UI description, not a valid effort value on
+the verified Sol API. The wizard uses low reasoning and JSON-object mode.
+
+`PATHFINDER_JUDGE_DEPLOYMENT` is optional. Omit it to disable the review action
+without blocking generation, diagrams or exports. When configured, the reviewer
+uses `PATHFINDER_JUDGE_REASONING_EFFORT` (default `medium`) and strict structured
+outputs, and runs only after the user selects **AI Review (optional)**. Preflight
+tests each configured role's actual reasoning/response-format requirements.
+
 The identity must already have model data-plane permissions on the existing
 resource. Attaching an identity does not grant permissions. Preflight can
 exercise the operator's credential before the Web App exists; model access using

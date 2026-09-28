@@ -2,10 +2,30 @@ import { DefaultAzureCredential, ManagedIdentityCredential } from "@azure/identi
 import { z } from "zod";
 import { loadLocalEnvDefaults } from "./env-defaults";
 import { pathfinderConfig, pathfinderPostJson } from "./pathfinder-apim";
+import { AI_REASONING_EFFORTS, ARCHITECT_REQUEST_TIMEOUT_MS, MAXIMUM_REASONING_EFFORT, REVIEW_REQUEST_TIMEOUT_MS } from "./recommendation-policy";
+import type { ModelOutputSchema } from "./model-output-schema";
 
 export type AiRole = "wizard" | "architecture" | "judge";
-export type ReasoningEffort = "low" | "medium" | "high";
-export const AI_POLICY_VERSION = "7.0";
+export type ReasoningEffort = typeof AI_REASONING_EFFORTS[number];
+export const AI_POLICY_VERSION = "9.1-high-level-sol-max";
+
+export class AiRoleConfigurationError extends Error {
+  readonly code = "AI_ROLE_NOT_CONFIGURED";
+  constructor(readonly role: AiRole, message: string) { super(message); this.name = "AiRoleConfigurationError"; }
+}
+
+export class AiProviderError extends Error {
+  readonly code = "AI_PROVIDER_ERROR";
+  constructor(readonly role: AiRole, readonly status: number) {
+    const label = role === "judge" ? "AI reviewer" : role === "architecture" ? "AI architect" : "Wizard AI";
+    const action = status === 429 ? "The model is temporarily at capacity. Retry shortly."
+      : status === 401 || status === 403 ? "Check the configured model credentials and access."
+      : status === 400 || status === 404 ? "Check the model deployment and supported request settings."
+      : "The provider could not complete the request. Retry shortly.";
+    super(`${label} request failed at the model provider (HTTP ${status}). ${action}`);
+    this.name = "AiProviderError";
+  }
+}
 
 const CompletionSchema = z.object({
   model: z.string().optional(),
@@ -77,20 +97,20 @@ export function aiRoleSettings(role: AiRole) {
     judge: process.env.PATHFINDER_JUDGE_DEPLOYMENT
   };
   if (external && !names[role]?.trim()) {
-    throw new Error(`External Foundry requires an explicit ${role} deployment name.`);
+    throw new AiRoleConfigurationError(role, `External Foundry requires an explicit ${role} deployment name.`);
   }
   const defaultModel = local
     ? role === "wizard" ? "gpt-5.6-terra" : "gpt-5.6-sol"
     : config.chatDeploymentName;
   const effort = role === "wizard" ? "low" : role === "judge"
-    ? process.env.PATHFINDER_JUDGE_REASONING_EFFORT || "medium" : "medium";
-  if (effort !== "low" && effort !== "medium" && effort !== "high") {
-    throw new Error("PATHFINDER_JUDGE_REASONING_EFFORT must be low, medium or high.");
+    ? process.env.PATHFINDER_JUDGE_REASONING_EFFORT || "medium" : MAXIMUM_REASONING_EFFORT;
+  if (!AI_REASONING_EFFORTS.some(value => value === effort)) {
+    throw new AiRoleConfigurationError(role, "PATHFINDER_JUDGE_REASONING_EFFORT must be low, medium, high or xhigh.");
   }
   return {
     role, model: names[role]?.trim() || defaultModel,
     reasoningEffort: effort as ReasoningEffort,
-    maxCompletionTokens: role === "wizard" ? 4096 : role === "judge" ? 8192 : 24000,
+    maxCompletionTokens: role === "wizard" ? 4096 : role === "judge" ? 8192 : 32768,
     transport,
     endpoint,
     policyVersion: AI_POLICY_VERSION
@@ -99,14 +119,25 @@ export function aiRoleSettings(role: AiRole) {
 
 export function aiRuntimeStatus() {
   const { transport, endpoint } = settings();
+  const roleStatus = (role: AiRole) => {
+    try {
+      const { model, reasoningEffort } = aiRoleSettings(role);
+      return { configured: true, model, reasoningEffort };
+    } catch (error) {
+      if (role !== "judge" || !(error instanceof AiRoleConfigurationError)) throw error;
+      console.warn("[ai] Optional reviewer is not configured:", error.message);
+      return { configured: false, error: error.message };
+    }
+  };
+  const roles = {
+    wizard: roleStatus("wizard"), architecture: roleStatus("architecture"), judge: roleStatus("judge")
+  };
   return {
     enabled: !!endpoint,
     transport,
     policyVersion: AI_POLICY_VERSION,
-    roles: Object.fromEntries((["wizard", "architecture", "judge"] as const).map(role => {
-      const { model, reasoningEffort } = aiRoleSettings(role);
-      return [role, { model, reasoningEffort }];
-    }))
+    roles,
+    reviewAvailable: roles.judge.configured
   };
 }
 
@@ -143,7 +174,12 @@ function waitForRetry(milliseconds: number, signal: AbortSignal) {
 
 export async function requestAiJson(
   role: AiRole, system: string, payload: unknown,
-  options: { signal?: AbortSignal; reasoningEffort?: ReasoningEffort; maxCompletionTokens?: number } = {}
+  options: {
+    signal?: AbortSignal;
+    reasoningEffort?: ReasoningEffort;
+    maxCompletionTokens?: number;
+    responseSchema?: ModelOutputSchema;
+  } = {}
 ): Promise<unknown> {
   if ((process.env.AZURE_OPENAI_ENABLED ?? "").toLowerCase() === "false") {
     throw new Error("AI is disabled by configuration.");
@@ -153,16 +189,20 @@ export async function requestAiJson(
   const body = {
     model: policy.model,
     messages: [
-      { role: "system", content: system },
+      { role: "system", content: `${system}\n\nRespond with one valid JSON object only.` },
       { role: "user", content: JSON.stringify(payload) }
     ],
-    response_format: { type: "json_object" },
+    response_format: options.responseSchema
+      ? { type: "json_schema", json_schema: options.responseSchema }
+      : { type: "json_object" },
     reasoning_effort: options.reasoningEffort ?? policy.reasoningEffort,
     max_completion_tokens: options.maxCompletionTokens ?? policy.maxCompletionTokens
   };
+  const timeoutMs = role === "wizard" ? 60_000
+    : role === "architecture" ? ARCHITECT_REQUEST_TIMEOUT_MS : REVIEW_REQUEST_TIMEOUT_MS;
   const signal = AbortSignal.any([
     ...(options.signal ? [options.signal] : []),
-    AbortSignal.timeout(role === "wizard" ? 60000 : 120000)
+    AbortSignal.timeout(timeoutMs)
   ]);
   console.info("[ai-v7] requesting", { role, model: body.model, effort: body.reasoning_effort });
   let raw: unknown;
@@ -180,7 +220,7 @@ export async function requestAiJson(
       headers["api-key"] = external ? process.env.AZURE_OPENAI_API_KEY.trim() : process.env.AZURE_OPENAI_API_KEY;
     } else {
       credential ??= new DefaultAzureCredential();
-      const token = await credential.getToken("https://cognitiveservices.azure.com/.default");
+      const token = await credential.getToken("https://cognitiveservices.azure.com/.default", { abortSignal: signal });
       if (!token?.token) throw new Error("Local AI authentication did not return a token.");
       headers.Authorization = `Bearer ${token.token}`;
     }
@@ -198,7 +238,8 @@ export async function requestAiJson(
             await waitForRetry(delay, signal);
             continue;
           }
-          throw new Error(`${external ? "External Foundry" : "Local AI"} ${role} request failed (HTTP ${response.status}). Check the deployment and credentials.`);
+          await response.body?.cancel();
+          throw new AiProviderError(role, response.status);
         }
         raw = await response.json();
         break;
@@ -210,7 +251,7 @@ export async function requestAiJson(
       }
     }
   } else {
-    raw = (await pathfinderPostJson(config.chatPath, body, { signal, timeoutMs: 120000 })).json;
+    raw = (await pathfinderPostJson(config.chatPath, body, { signal, timeoutMs })).json;
   }
   const parsed = CompletionSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`AI ${role} returned an invalid completion response.`);

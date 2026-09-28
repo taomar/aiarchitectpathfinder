@@ -5,6 +5,7 @@ import { QUESTIONS, nextQuestion } from "../lib/questions";
 import { buildArchitectureSummary } from "../lib/architecture-summary";
 import { categoryForDecision } from "../lib/pathfinder-category";
 import { azureOpenAIEnabled, azureOpenAIStatus, tieBreak } from "../lib/azure-openai";
+import { RECOMMENDATION_TIMEOUT_MS } from "../lib/recommendation-policy";
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse, WizardQuestion } from "../lib/types";
 
 type ScenarioInput = DecisionInput & Record<string, unknown>;
@@ -191,8 +192,7 @@ async function callTieBreakWithTimeout(input: DecisionInput, decision: Architect
   try {
     return await tieBreak(input, decision, undefined, {
       signal: controller.signal,
-      maxCompletionTokens: 12000,
-      reasoningEffort: "high"
+      maxCompletionTokens: 32768
     });
   } finally {
     clearTimeout(timeout);
@@ -203,7 +203,7 @@ async function compareLlm(scenario: Scenario, wizardRun: WizardRun) {
   const mismatches: string[] = [];
   let tieBreakResult: TieBreakResponse;
   try {
-    tieBreakResult = await callTieBreakWithTimeout(wizardRun.input, wizardRun.decision, 180000);
+    tieBreakResult = await callTieBreakWithTimeout(wizardRun.input, wizardRun.decision, RECOMMENDATION_TIMEOUT_MS);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { mismatches: [`LLM call failed: ${message}`], tieBreakResult: null as TieBreakResponse | null };

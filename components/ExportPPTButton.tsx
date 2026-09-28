@@ -2,15 +2,13 @@
 
 import { useState } from "react";
 import type { ArchitectureDecision, DecisionInput, TieBreakResponse } from "@/lib/types";
-import { buildArchitectureSummary, shouldUseGeneratedArchitectureSummary } from "@/lib/architecture-summary";
 import { buildArchitectureView } from "@/lib/architecture-view";
 import { buildArchitectureLayout } from "@/lib/architecture-layout";
-import { displayPatternName } from "@/lib/pathfinder-category";
-import { reportUseCaseSummary } from "@/lib/export";
+import { AcceptedRecommendationSchema, recommendationDecision } from "@/lib/recommendation-contract";
 import { buildPowerPoint, type PowerPointAssets } from "@/lib/powerpoint";
 import { trackUsageEvent, type UsageSession } from "@/lib/usage-client";
 
-export { addArchitectureBlueprintSlide, addReportDetailsSlides, splitIntoSlideChunks } from "@/lib/powerpoint";
+export { addArchitectureBlueprintSlide, splitIntoSlideChunks } from "@/lib/powerpoint";
 
 async function pngAsset(path: string) {
   const response = await fetch(path, { cache: "force-cache" });
@@ -63,15 +61,11 @@ export function ExportPPTButton({
     setError(null);
     try {
       const { default: PptxGenJS } = await import("pptxgenjs");
-      const solutionType = decision.basePatternId === "m365_copilot_productivity"
-        ? displayPatternName(decision) : category.category;
-      const useCaseSummary = reportUseCaseSummary(input, decision, tieBreak);
-      const fallbackSummary = buildArchitectureSummary(input, decision, solutionType);
-      const architectureSummary = tieBreak?.aiValidated && tieBreak.proposedArchitectureSummary?.trim()
-        ? tieBreak.proposedArchitectureSummary
-        : shouldUseGeneratedArchitectureSummary(tieBreak?.proposedArchitectureSummary, useCaseSummary, decision.finalRecommendation, solutionType)
-          ? fallbackSummary : tieBreak?.proposedArchitectureSummary || fallbackSummary;
-      const model = buildArchitectureView(decision, input);
+      const report = AcceptedRecommendationSchema.parse(tieBreak);
+      const approved = recommendationDecision(report);
+      const solutionType = report.solutionType;
+      const architectureSummary = report.proposedArchitectureSummary;
+      const model = buildArchitectureView(approved);
       const diagramNodes = buildArchitectureLayout(model).nodes.map(item => item.node);
       const paths = [...new Set(diagramNodes.flatMap(node => node.icon ? [node.icon] : []))];
       const [logo, images] = await Promise.all([
@@ -85,13 +79,13 @@ export function ExportPPTButton({
           .flatMap(node => node.icon && byPath.has(node.icon) ? [[node.id, byPath.get(node.icon)!]] : []))
       };
       const pptx = new PptxGenJS();
-      buildPowerPoint(pptx, { input, decision, tieBreak, architectureSummary, refinement, solutionType }, assets);
-      await pptx.writeFile({ fileName: `architecture-${decision.basePatternId}-${Date.now()}.pptx` });
+      buildPowerPoint(pptx, { input, decision: approved, tieBreak: report, architectureSummary, refinement, solutionType }, assets);
+      await pptx.writeFile({ fileName: `architecture-${report.recommendedBasePatternId}-${Date.now()}.pptx` });
       if (usageSession) trackUsageEvent({
         eventType: "powerpoint_exported", sessionId: usageSession.id,
         source: usageSession.source, sourceDetail: usageSession.sourceDetail,
-        solutionType, displayPattern: displayPatternName(decision),
-        basePatternId: decision.basePatternId, confidence: decision.confidence
+        solutionType, displayPattern: report.displayPatternName,
+        basePatternId: report.recommendedBasePatternId, confidence: report.confidence
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "PowerPoint export failed.";

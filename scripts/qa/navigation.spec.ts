@@ -1,24 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { decide } from "../../lib/decision-engine";
-import { prepareDecisionInputForRecommendation } from "../../lib/summary-intake";
-import { buildMermaidDiagram, displayPatternName } from "../../lib/pathfinder-category";
+import type { DecisionInput } from "../../lib/types";
+import { acceptedFixture } from "./recommendation-fixture";
 import { caseDirectory, diagnostics, login, mockWizardAssistance } from "./helpers";
 
-function fixture(input: Parameters<typeof decide>[0], title = "Synthetic reviewed report") {
-  const prepared = prepareDecisionInputForRecommendation(input);
-  const decision = decide(prepared);
+function fixture(input: DecisionInput, title = "Synthetic reviewed report") {
+  const accepted = acceptedFixture(input.summary || title);
   return {
-    ...decision, recommendedBasePatternId: decision.basePatternId,
-    recommendedOverlays: decision.overlays.map(item => item.id),
-    useCaseTitle: title, useCaseSummary: input.summary || title,
-    proposedArchitectureSummary: title + ". " + decision.finalRecommendation,
-    solutionType: displayPatternName(decision), displayPatternName: displayPatternName(decision),
-    questionsToAskNext: [], reasoning: [], mustNotInclude: [],
-    architectureDiagramPrompt: "", mermaidDiagram: buildMermaidDiagram(decision),
-    recommendationMode: "fast", aiValidated: true,
-    agentTrace: [{ agent: "Architecture Critic", status: "passed", summary: "Synthetic browser fixture, not a live model judgment.", details: [] }]
+    ...accepted, useCaseTitle: title,
+    proposedArchitectureSummary: `${title}. ${accepted.proposedArchitectureSummary}`
   };
 }
 
@@ -116,7 +107,7 @@ test("skipping optional sections reaches a recommendation without leaking old ex
   }
   await expect(page.getByRole("heading", { name: "All sections answered", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "View recommendation", exact: true }).last().click();
-  await expect(page.getByText("AI-refined", { exact: true })).toBeVisible();
+  await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   expect(requests).toHaveLength(1);
   const input = requests[0].input as Record<string, unknown>;
   expect(input.users).toEqual(["unknown"]);
@@ -137,7 +128,7 @@ test("editing an example into a new direct-text scenario removes the old audienc
   await page.getByRole("textbox", { name: "Tell us the scenario", exact: true }).fill(summary);
   await page.getByRole("checkbox", { name: /Skip the wizard/ }).check();
   await page.getByRole("button", { name: "Continue →", exact: true }).click();
-  await expect(page.getByText("AI-refined", { exact: true })).toBeVisible();
+  await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   expect(requests).toHaveLength(1);
   const input = requests[0].input as Record<string, unknown>;
   expect(input.summary).toBe(summary);
@@ -146,7 +137,7 @@ test("editing an example into a new direct-text scenario removes the old audienc
   expect(input.users).not.toContain("internal_employees");
   expect(input.dataSources).not.toContain("sharepoint");
   await page.reload();
-  await expect(page.getByText("AI-refined", { exact: true })).toBeVisible();
+  await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   expect(requests).toHaveLength(2);
   expect(requests[1].input).toEqual(requests[0].input);
 });
@@ -193,26 +184,20 @@ test("a review can finish after the old deadline without duplicate requests or p
   await page.clock.fastForward(121_000);
   expect(count).toBe(1);
   release();
-  await expect(page.getByText("AI-refined", { exact: true })).toBeVisible();
+  await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   expect(count).toBe(1);
   expect(diagnostics(page).httpErrors.filter(item => item.path === "/.auth/refresh")).toEqual([]);
 });
 
-test("a newer refinement wins over a late initial review and protects unsaved notes on navigation", async ({ page }) => {
+test("an AI refinement replaces the prior artifact and protects unsaved notes on navigation", async ({ page }) => {
   await login(page);
-  let release!: () => void;
-  const delayed = new Promise<void>(resolve => { release = resolve; });
-  let firstRequest = true;
+  let requests = 0;
   await page.route("**/api/tiebreak", async route => {
     if (route.request().method() === "GET") return route.fulfill({ json: { enabled: true, authRefreshEnabled: false } });
     const body = route.request().postDataJSON();
-    if (firstRequest) {
-      firstRequest = false;
-      await delayed;
-      await route.fulfill({ json: fixture(body.input, "OLD_INITIAL_REPORT") });
-    } else {
-      await route.fulfill({ json: fixture(body.input, "LATEST_REFINED_REPORT") });
-    }
+    requests++;
+    if (requests > 1) expect(body.previousRecommendation.authority).toBe("ai");
+    await route.fulfill({ json: fixture(body.input, requests === 1 ? "OLD_INITIAL_REPORT" : "LATEST_REFINED_REPORT") });
   });
   await page.getByRole("article").first().getByRole("button", { name: "Load this Scenario", exact: true }).click();
   const notes = page.getByRole("textbox", { name: "Refine the recommendation", exact: true });
@@ -220,9 +205,8 @@ test("a newer refinement wins over a late initial review and protects unsaved no
   await notes.fill("Explain document permissions and keep the operation read-only.");
   await page.getByRole("button", { name: "Apply refinement", exact: true }).click();
   await expect(page.getByText(/LATEST_REFINED_REPORT/).first()).toBeVisible();
-  release();
-  await page.waitForTimeout(200);
   await expect(page.getByText(/OLD_INITIAL_REPORT/)).toHaveCount(0);
+  expect(requests).toBe(2);
   const dismiss = page.waitForEvent("dialog").then(dialog => dialog.dismiss());
   await page.getByRole("button", { name: "Back to wizard", exact: true }).click();
   await dismiss;
@@ -234,7 +218,7 @@ test("a newer refinement wins over a late initial review and protects unsaved no
   expect((await saved(page)).input.summary ?? "").toBe("");
 });
 
-test("an unavailable review leaves an honest draft and usable tabs instead of retrying the whole workflow", async ({ page }) => {
+test("an unavailable AI report shows an explicit error and no deterministic recommendation", async ({ page }) => {
   await login(page);
   let count = 0;
   await page.route("**/api/tiebreak", async route => {
@@ -243,13 +227,13 @@ test("an unavailable review leaves an honest draft and usable tabs instead of re
     await route.fulfill({ status: 503, json: { error: "Synthetic model service unavailable." } });
   });
   await page.getByRole("article").first().getByRole("button", { name: "Load this Scenario", exact: true }).click();
-  await expect(page.getByText("Rules-based draft", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("AI recommendation unavailable", { exact: true })).toBeVisible();
   expect(count).toBe(1);
-  for (const tab of ["Governance", "Technical", "Architecture", "Overview"]) {
-    await page.getByRole("button", { name: new RegExp(`^${tab}\\b`) }).click();
-  }
-  await expect(page.getByRole("button", { name: "Export as PowerPoint", exact: true })).toBeEnabled();
-  await expect(page.getByText("AI-refined", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Generate architecture", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Recommended services", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Export as PowerPoint", exact: true })).toBeDisabled();
+  await expect(page.getByText("AI-generated", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retry AI recommendation", exact: true })).toBeEnabled();
 });
 
 test("password sessions protect APIs and admin access and logout invalidates browser access", async ({ page }) => {

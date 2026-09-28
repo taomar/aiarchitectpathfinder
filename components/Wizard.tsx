@@ -468,7 +468,7 @@ export function Wizard() {
 
   const viewRecommendation = () => {
     if (!usageSession) startUsageSession(nextSessionSource);
-    setFinalPayload({ input: recommendationInput, decision });
+    setFinalPayload({ input, decision });
     setStage("final");
   };
 
@@ -496,7 +496,7 @@ export function Wizard() {
       if (directTextReady) {
         confirmStep();
         startUsageSession("direct_text");
-        setFinalPayload({ input: recommendationInput, decision });
+        setFinalPayload({ input, decision });
         setStage("final");
         return;
       }
@@ -595,7 +595,7 @@ export function Wizard() {
     const prepared = prepareDecisionInputForRecommendation(normalized);
     setInput(normalized);
     setConfirmed([]);
-    setFinalPayload({ input: prepared, decision: decide(prepared) });
+    setFinalPayload({ input: normalized, decision: decide(prepared) });
     startUsageSession("example", `${exampleId}:recommendation`);
     setStage("final");
   };
@@ -842,7 +842,7 @@ export function Wizard() {
   }
 
   if (stage === "final") {
-    const finalInput = finalPayload?.input ?? recommendationInput;
+    const finalInput = finalPayload?.input ?? input;
     const finalDecision = finalPayload?.decision ?? decision;
     return (
       <div className="min-h-screen bg-brand-soft">

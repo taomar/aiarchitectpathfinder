@@ -8,12 +8,13 @@ function getMermaid() {
     mermaidPromise = import("mermaid").then((m) => {
       m.default.initialize({
         startOnLoad: false,
-        theme: "neutral",
+        theme: "base",
+        themeVariables: { fontFamily: "Segoe UI, Arial, sans-serif", fontSize: "16px", primaryColor: "#EFF6FC", primaryTextColor: "#17344F", primaryBorderColor: "#0F6CBD", lineColor: "#2D6B98" },
         securityLevel: "strict",
         // htmlLabels:false keeps labels as native SVG <text> so the on-page
         // SVG can be rasterized to canvas (PPT export). <foreignObject>
         // labels cannot be drawn via <img> in Chromium.
-        flowchart: { curve: "basis", padding: 12, htmlLabels: false }
+        flowchart: { curve: "linear", padding: 16, htmlLabels: false }
       });
       return m.default;
     });
@@ -73,7 +74,7 @@ export function MermaidDiagram({ code, fallbackCode }: { code: string; fallbackC
       {rendering ? (
         <div className="absolute inset-0 flex items-center justify-center bg-white/80 text-sm text-gray-600">
           <span className="mr-2 h-5 w-5 rounded-full border-2 border-ms-blue border-t-transparent animate-spin" />
-          Loading component flow...
+          Loading high-level flow...
         </div>
       ) : null}
       <div

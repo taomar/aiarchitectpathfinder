@@ -4,28 +4,22 @@ import path from "node:path";
 import JSZip from "jszip";
 import { z } from "zod";
 import { requestAiJson } from "../../lib/ai-runtime";
-import { TieBreakSchema } from "../../lib/azure-openai";
-import { decide } from "../../lib/decision-engine";
-import { prepareDecisionInputForRecommendation } from "../../lib/summary-intake";
+import { AcceptedRecommendationSchema, recommendationDecision } from "../../lib/recommendation-contract";
 import { buildMermaidDiagram } from "../../lib/pathfinder-category";
-import { withAiRecommendation } from "../../components/FinalRecommendation";
 import { isDeepStrictEqual } from "node:util";
+import { readRecommendationResponse } from "../../lib/recommendation-progress";
+import { RECOMMENDATION_CLIENT_TIMEOUT_MS } from "../../lib/recommendation-policy";
 
 export const artifactRoot = path.resolve(process.env.E2E_ARTIFACT_DIR || "");
 const access = JSON.parse(fs.readFileSync(path.join(artifactRoot, "local-access.json"), "utf8")) as { origin: string; password: string };
 
-const Report = z.object({
-  recommendedBasePatternId: z.string(),
-  recommendedOverlays: z.array(z.string()),
-  finalRecommendation: z.string().min(1),
-  proposedArchitectureSummary: z.string().min(1),
-  recommendedStack: z.array(z.string()),
-  architectureLayers: z.array(z.object({
-    layer: z.string(), selections: z.array(z.string()), required: z.boolean(), reason: z.string()
-  })),
-  securityControls: z.array(z.string()),
-  aiValidated: z.literal(true)
-}).passthrough();
+const Report = AcceptedRecommendationSchema;
+const SessionCookies = z.array(z.object({
+  name: z.string(), value: z.string(), domain: z.string(), path: z.string(),
+  expires: z.number(), httpOnly: z.boolean(), secure: z.boolean(),
+  sameSite: z.enum(["Strict", "Lax", "None"])
+}));
+const authSessionFile = path.join(artifactRoot, "browser-session.json");
 
 export type CapturedReview = {
   input: Record<string, unknown>;
@@ -77,18 +71,24 @@ export async function login(page: Page, tours = false) {
       localStorage.setItem("ai-pdn:coach-recommendation", "0");
     });
   }
+  if (fs.existsSync(authSessionFile)) {
+    await page.context().addCookies(SessionCookies.parse(JSON.parse(fs.readFileSync(authSessionFile, "utf8"))));
+  }
   await page.goto(access.origin);
-  await expect(page.getByLabel("Access password")).toBeVisible();
-  await page.getByLabel("Access password").fill(access.password);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  if (await page.getByLabel("Access password").isVisible()) {
+    await page.getByLabel("Access password").fill(access.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  }
   await expect(page.getByRole("button", { name: "Start your use case", exact: true })).toBeVisible();
+  const cookies = (await page.context().cookies()).filter(cookie => cookie.name === "__Host-pathfinder-session");
+  fs.writeFileSync(authSessionFile, JSON.stringify(cookies), { mode: 0o600 });
   const replayRoot = process.env.E2E_REPLAY_DIR;
   if (replayRoot) {
     const records: CapturedReview[] = [];
     for (const directory of fs.readdirSync(replayRoot, { withFileTypes: true }).filter(item => item.isDirectory())) {
       for (const file of fs.readdirSync(path.join(replayRoot, directory.name)).filter(name => name.endsWith(".json") && !name.includes("failure"))) {
         const candidate = JSON.parse(fs.readFileSync(path.join(replayRoot, directory.name, file), "utf8"));
-        if (candidate?.input && candidate?.report?.aiValidated) records.push(candidate);
+        if (candidate?.input && candidate?.report?.authority === "ai") records.push(candidate);
       }
     }
     await page.route("**/api/tiebreak", async route => {
@@ -100,10 +100,9 @@ export async function login(page: Page, tours = false) {
         item.report.recommendationMode === (body.recommendationMode ?? "fast")
       );
       if (!recorded) throw new Error("No matching successful live response exists for this renderer replay. Run this scenario live first.");
-      const review = TieBreakSchema.extend({ aiValidated: z.literal(true) }).passthrough().parse(recorded.report);
-      const decision = decide(prepareDecisionInputForRecommendation(body.input));
-      const projected = withAiRecommendation(decision, review);
-      review.mermaidDiagram = buildMermaidDiagram(projected);
+      const review = AcceptedRecommendationSchema.parse(recorded.report);
+      const projected = recommendationDecision(review);
+      expect(buildMermaidDiagram(projected)).toBe(review.mermaidDiagram);
       console.log("REPLAY recorded live report; re-rendering current diagrams and exports without another model composition.");
       await route.fulfill({ json: review });
     });
@@ -112,25 +111,64 @@ export async function login(page: Page, tours = false) {
 
 export async function reviewAfter(page: Page, label: string, trigger: () => Promise<unknown>, directory: string): Promise<CapturedReview> {
   const started = Date.now();
-  const [response] = await progress(label, () => Promise.all([
-    page.waitForResponse(response =>
-      new URL(response.url()).pathname === "/api/tiebreak" &&
-      response.request().method() === "POST", { timeout: 270_000 }),
-    trigger()
-  ]));
-  const body = z.object({
-    input: z.record(z.unknown()),
-    userNotes: z.string().optional()
-  }).parse(response.request().postDataJSON());
-  const raw: unknown = await response.json();
-  if (!response.ok()) {
-    fs.writeFileSync(path.join(directory, `${label}-failure.json`), JSON.stringify(raw, null, 2));
-    throw new Error(`${label} failed with HTTP ${response.status()}: ${JSON.stringify(raw).slice(0, 1500)}`);
-  }
-  const report = Report.parse(raw);
+  const { body, report } = await progress(label, async () => {
+    type Capture = {
+      original: typeof fetch;
+      wrapper: typeof fetch;
+      result?: Promise<{ text: string; status: number; contentType: string } | { error: string }>;
+    };
+    // Chromium does not reliably retain long-lived streamed bodies for Network.getResponseBody.
+    // Read a clone in the browser without replacing the application's response or making another request.
+    await page.evaluate(() => {
+      const capture: Capture = { original: window.fetch, wrapper: window.fetch };
+      capture.wrapper = async (input, init) => {
+        const response = await capture.original.call(window, input, init);
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        if (method === "POST" && new URL(url, location.href).pathname === "/api/tiebreak") {
+          capture.result = response.clone().text().then(text => ({
+            text, status: response.status, contentType: response.headers.get("content-type") ?? "application/json"
+          }), error => ({ error: error instanceof Error ? error.message : String(error) }));
+        }
+        return response;
+      };
+      Reflect.set(window, "__qaRecommendationCapture", capture);
+      window.fetch = capture.wrapper;
+    });
+    try {
+      const [response] = await Promise.all([
+        page.waitForResponse(response =>
+          new URL(response.url()).pathname === "/api/tiebreak" &&
+          response.request().method() === "POST", { timeout: RECOMMENDATION_CLIENT_TIMEOUT_MS }),
+        trigger()
+      ]);
+      const body = z.object({
+        input: z.record(z.unknown()),
+        userNotes: z.string().optional()
+      }).parse(response.request().postDataJSON());
+      await page.waitForFunction(() => !!(Reflect.get(window, "__qaRecommendationCapture") as Capture | undefined)?.result);
+      const captured = await page.evaluate(() => (Reflect.get(window, "__qaRecommendationCapture") as Capture).result!);
+      if ("error" in captured) throw new Error(`Browser response capture failed: ${captured.error}`);
+      try {
+        const report = await readRecommendationResponse(new Response(captured.text, {
+          status: captured.status, headers: { "content-type": captured.contentType }
+        }), event => console.log(`OBSERVED ${label}: ${event.stage} (attempt ${event.attempt}, ${Math.round(event.elapsedMs / 1000)}s)`));
+        return { body, report };
+      } catch (error) {
+        fs.writeFileSync(path.join(directory, `${label.replace(/[^a-z0-9]+/gi, "-")}-failure.txt`), captured.text);
+        throw error;
+      }
+    } finally {
+      if (!page.isClosed()) await page.evaluate(() => {
+        const capture = Reflect.get(window, "__qaRecommendationCapture") as Capture | undefined;
+        if (capture && window.fetch === capture.wrapper) window.fetch = capture.original;
+        Reflect.deleteProperty(window, "__qaRecommendationCapture");
+      });
+    }
+  });
   const captured = { input: body.input, notes: body.userNotes, report, elapsedMs: Date.now() - started };
   fs.writeFileSync(path.join(directory, `${label.replace(/[^a-z0-9]+/gi, "-")}.json`), JSON.stringify(captured, null, 2));
-  await expect(page.getByText("AI-refined", { exact: true })).toBeVisible();
+  await expect(page.getByText("AI-generated", { exact: true })).toBeVisible();
   return captured;
 }
 
@@ -152,7 +190,7 @@ export async function captureDiagrams(page: Page, directory: string): Promise<Ou
   const labels = await diagram.locator("svg text").evaluateAll(nodes => nodes.filter(node => !node.closest("[data-diagram-icon]")).map(node => node.textContent));
   expect(labels.length).toBeGreaterThan(4);
   await diagram.screenshot({ path: path.join(directory, "architecture.png") });
-  const flow = page.locator("section").filter({ has: page.getByRole("heading", { name: "Service flow", exact: true }) });
+  const flow = page.locator("section").filter({ has: page.getByRole("heading", { name: "High-level solution flow", exact: true }) });
   await expect(flow.locator("svg")).toBeVisible();
   const flowGraph = await flow.locator("svg").evaluate(element => ({
     nodes: Array.from(element.querySelectorAll("g.node")).map(node => ({ id: node.id, label: node.textContent })),
@@ -225,7 +263,7 @@ The supplied profile is observed input from the actual UI request. For structure
 Evaluate EVERY artifact separately for correctness, coverage of the stated requirements, clarity, and consistency.
 For diagrams, assess the actual graph/geometry and labels, not flattened text order or prose that belongs in the report.
 The connected diagram shows directional component relationships within logical boundaries, not a fabricated network deployment. Reference numbers identify the listed relationships, not a temporal sequence. Grouping related capabilities under their platform is allowed; missing required runtime or data paths is not.
-For a slide deck, assess its actual extracted slide text and whether it faithfully preserves the scenario and controls. Concise primary slides may refer to complete appendix details; truncation is a failure only if meaning or required information is lost from the complete deck.
+For a slide deck, assess it as a concise <=15-slide presentation with no long appendix or presenter commentary. It must preserve the architecture decision and essential boundaries, include the actual selected Azure services and proposed Dev/Test/Prod sizes, and identify sizing assumptions. Do not require the entire long report to be repeated in slides.
 Missing user facts are not failures if assumptions and prerequisites are clearly labelled. Do not invent requirements.
 Required product invariants: no model writes directly to systems of record; required access controls remain; Fabric analytics is not replaced with document search; external channels do not imply M365 Agents SDK; private networking must not be asserted as a confirmed requirement unless requested.
 Flag unsupported guarantees, contradictions, wrong audience/data sources, stale content from another scenario, lost constraints, and misleading claims.

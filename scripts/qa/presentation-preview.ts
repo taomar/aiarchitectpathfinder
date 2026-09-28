@@ -2,10 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import PptxGenJS from "pptxgenjs";
-import { decide } from "../../lib/decision-engine";
-import { prepareDecisionInputForRecommendation } from "../../lib/summary-intake";
-import { TieBreakSchema } from "../../lib/azure-openai";
-import { withAiRecommendation } from "../../components/FinalRecommendation";
+import { AcceptedRecommendationSchema, recommendationDecision } from "../../lib/recommendation-contract";
 import { displayPatternName } from "../../lib/pathfinder-category";
 import { buildArchitectureView } from "../../lib/architecture-view";
 import { availableDiagramFocuses, buildArchitectureLayout } from "../../lib/architecture-layout";
@@ -25,9 +22,9 @@ async function main() {
 const require = createRequire(path.join(root, "package.json"));
 const sharp: typeof import("sharp") = require("sharp");
 const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
-const input = prepareDecisionInputForRecommendation(record.input);
-const review = TieBreakSchema.extend({}).passthrough().parse(record.report);
-const decision = withAiRecommendation(decide(input), { ...review, aiValidated: true });
+const input = record.input;
+const review = AcceptedRecommendationSchema.parse(record.report);
+const decision = recommendationDecision(review);
 const model = buildArchitectureView(decision, input);
 const nodes = buildArchitectureLayout(model).nodes.map(item => item.node);
 const assets: Record<string, string> = {};
@@ -43,7 +40,7 @@ const logo = `data:image/png;base64,${fs.readFileSync(path.join(root, "public", 
 fs.mkdirSync(outputDirectory, { recursive: true });
 const pptx = new PptxGenJS();
 const result = buildPowerPoint(pptx, {
-  input, decision, tieBreak: { ...review, aiValidated: true },
+  input, decision, tieBreak: review,
   architectureSummary: review.proposedArchitectureSummary,
   solutionType: displayPatternName(decision),
   refinement: record.notes

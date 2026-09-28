@@ -1,9 +1,10 @@
 import { graphlib, layout, type GraphLabel, type NodeLabel, type EdgeLabel, type Point } from "@dagrejs/dagre";
 import type { ArchitectureView, ViewEdge, ViewNode } from "./architecture-view";
+import { stackArchitecture } from "./architecture-stack";
 
 export type DiagramFocus = "overview" | "request" | "models" | "data" | "preparation";
 export type DiagramBox = { x: number; y: number; width: number; height: number };
-export type DiagramNode = DiagramBox & { node: ViewNode; annotation: boolean; labelLines: string[]; caption: string; glyph: "phone" | "window" | "api" | "code" | "pipeline" | "service" };
+export type DiagramNode = DiagramBox & { node: ViewNode; annotation: boolean; labelLines: string[]; caption: string; glyph: "person" | "phone" | "window" | "api" | "code" | "pipeline" | "service" };
 export type DiagramEdge = Omit<ViewEdge, "kind"> & { kind: ViewEdge["kind"] | "policy" };
 export type DiagramGroup = DiagramBox & { id: string; title: string; subtitle: string; fill: string };
 export type DiagramConnection = {
@@ -13,9 +14,13 @@ export type DiagramConnection = {
   points: Point[];
   labelPoint: Point;
   shortLabel: string;
+  labelLines: string[];
+  labelBox: DiagramBox;
 };
 export type ArchitectureLayout = {
-  version: 2;
+  version: 3;
+  highLevel: boolean;
+  layoutStyle: "graph" | "stacked";
   focus: DiagramFocus;
   title: string;
   width: number;
@@ -31,8 +36,18 @@ const GROUPS = [
   { id: "app", title: "Application & orchestration", subtitle: "Logical workload boundary", layers: ["runtime", "interfaces"], fill: "EFF6FC" },
   { id: "ai", title: "Model & grounding services", subtitle: "Service dependencies", layers: ["models", "grounding"], fill: "F5F2FB" },
   { id: "source", title: "Authoritative sources", subtitle: "Source-owned access boundary", layers: ["data"], fill: "F0F8F5" },
-  { id: "prepare", title: "Background preparation", subtitle: "Separate ingestion identity", layers: ["preparation"], fill: "F7F7F9" }
+  { id: "prepare", title: "Background preparation", subtitle: "Separate ingestion identity", layers: ["preparation"], fill: "F7F7F9" },
+  { id: "ai-controls", title: "Identity, security & operations", subtitle: "AI-authored control dependencies", layers: ["identity", "security", "operations"], fill: "F4F8F4" },
+  { id: "network", title: "Network dependencies", subtitle: "AI-authored network components", layers: ["network"], fill: "F3F6FA" }
 ];
+
+const HIGH_LEVEL_GROUPS = [
+  { id: "experience", title: "Experience / entry layer", subtitle: "Logical layer boundary", layers: ["channels", "edge"], fill: "F3F7FB" },
+  { id: "application-ai", title: "Application / AI layer", subtitle: "Logical layer boundary", layers: ["runtime", "interfaces", "models", "grounding"], fill: "EDF5FC" },
+  { id: "sources", title: "Data / source layer", subtitle: "Source-owned access boundary", layers: ["data", "preparation"], fill: "F0F8F5" },
+  { id: "governance", title: "Identity / governance layer", subtitle: "Cross-cutting logical boundary", layers: ["identity", "security", "operations", "network"], fill: "F4F5FA" }
+];
+const PROVIDER_NAMES = { azure: "Azure", "microsoft-saas": "Microsoft SaaS", external: "External", logical: "Logical" };
 
 export const DIAGRAM_LEGEND = [
   { kind: "request", color: "156DAF", dash: "", label: "Request / authorized query" },
@@ -91,7 +106,7 @@ function focusEdges(view: ArchitectureView, focus: DiagramFocus) {
     const from = nodes.get(edge.from)!;
     const to = nodes.get(edge.to)!;
     if (focus === "preparation") return edge.kind === "preparation";
-    if (focus === "request") return [from.layer, to.layer].every(layer => ["channels", "edge", "runtime"].includes(layer));
+    if (focus === "request") return [from.layer, to.layer].every(layer => ["channels", "edge", "runtime", "identity", "security"].includes(layer));
     if (focus === "models") return to.layer === "models" || from.layer === "models";
     return edge.kind !== "preparation" && (
       ["grounding", "interfaces", "data"].includes(from.layer) ||
@@ -106,7 +121,7 @@ export function availableDiagramFocuses(view: ArchitectureView): DiagramFocus[] 
 
 export function diagramFocusTitle(focus: DiagramFocus) {
   return {
-    overview: "Connected workload architecture",
+    overview: "High-level component integration",
     request: "Entry & orchestration",
     models: "Model inference & hosting",
     data: "Grounding & source access",
@@ -115,6 +130,9 @@ export function diagramFocusTitle(focus: DiagramFocus) {
 }
 
 function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, direction: "LR" | "TB"): ArchitectureLayout {
+  const highLevel = view.authority === "ai";
+  const isAudience = (node: ViewNode) => node.layer === "channels" && !node.icon &&
+    view.audience.some(audience => audience.trim().toLowerCase() === node.label.trim().toLowerCase());
   const edges: DiagramEdge[] = [...focusEdges(view, focus)];
   const connectedIds = new Set(edges.flatMap(edge => [edge.from, edge.to]));
   const nodes = view.layers.flatMap(layer => layer.nodes)
@@ -126,7 +144,7 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
     edges.push({ from: target, to: id, label: edgeLabel, kind: required ? "policy" : "conditional" });
   };
   const entry = ["custom-backend", "copilot-studio", "foundry-agent", "m365-copilot"].find(id => nodes.some(node => node.id === id));
-  if ((focus === "overview" || focus === "request") && entry) {
+  if (view.authority !== "ai" && (focus === "overview" || focus === "request") && entry) {
     const providers = new Map<string, (typeof view.controls.identity)[number]>();
     for (const identity of view.controls.identity.filter(item => /entra/i.test(item.label))) {
       const key = /external/i.test(identity.label) ? "external" : "workforce";
@@ -139,7 +157,7 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
         identity.scope, entry, "Identity / token-validation dependency", identity.required);
     }
   }
-  if (focus === "overview" && entry) {
+  if (view.authority !== "ai" && focus === "overview" && entry) {
     const insights = view.controls.operations.find(item => /application insights/i.test(item.label));
     if (insights) {
       annotations.add("control-telemetry");
@@ -153,7 +171,8 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
     .setGraph({ rankdir: direction, ranksep: compound ? 56 : 74, nodesep: 34, edgesep: 14, marginx: 24, marginy: 30, ranker: "network-simplex" })
     .setDefaultEdgeLabel(() => ({}));
   const groupByLayer = new Map<string, string>();
-  const groups = compound ? GROUPS.filter(group => nodes.some(node => !annotations.has(node.id) && group.layers.includes(node.layer))) : [];
+  const groups = compound ? (highLevel ? HIGH_LEVEL_GROUPS : GROUPS)
+    .filter(group => nodes.some(node => !annotations.has(node.id) && group.layers.includes(node.layer))) : [];
   if (compound && annotations.size) groups.push({ id: "controls", title: "Identity & operations", subtitle: "Control-plane dependencies", layers: [], fill: "F4F8F4" });
   for (const group of groups) {
     graph.setNode(`group-${group.id}`, { width: 0, height: 0, label: group.title });
@@ -163,15 +182,25 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
   for (const node of nodes) {
     const lines = wrapDiagramLabel(node.label);
     labels.set(node.id, lines);
-    graph.setNode(node.id, { width: Math.max(184, Math.max(...lines.map(line => line.length)) * 8.3 + 28), height: 92 + lines.length * 21 });
-    if (compound) graph.setParent(node.id, `group-${annotations.has(node.id) ? "controls" : groupByLayer.get(node.layer)}`);
+    graph.setNode(node.id, {
+      width: Math.max(highLevel ? 200 : 184, Math.max(...lines.map(line => line.length)) * (highLevel ? 9 : 8.3) + 28),
+      height: highLevel ? 108 + lines.length * 25 : 92 + lines.length * 21
+    });
+    if (compound) {
+      const groupId = annotations.has(node.id) ? "controls" : groupByLayer.get(node.layer);
+      if (!groupId) throw new Error(`No presentation layer exists for ${node.layer}.`);
+      graph.setParent(node.id, `group-${groupId}`);
+    }
   }
   const mainEdges = [...edges].sort((a, b) =>
     Number(a.kind === "preparation") - Number(b.kind === "preparation") ||
     `${a.from}|${a.to}|${a.label}`.localeCompare(`${b.from}|${b.to}|${b.label}`));
   mainEdges.forEach((edge, index) => {
+    const labelLines = wrapDiagramLabel(edge.label, 24);
     graph.setEdge(edge.from, edge.to, {
-      width: 30, height: 24, labelpos: "c", minlen: 1,
+      width: highLevel ? Math.max(70, ...labelLines.map(line => line.length * 7.6 + 20)) : 30,
+      height: highLevel ? labelLines.length * 20 + 10 : 24,
+      labelpos: "c", minlen: 1,
       weight: edge.kind === "request" ? 4 : edge.kind === "query" ? 3 : 1
     }, `connection-${index}`);
   });
@@ -204,26 +233,32 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
   nodes.filter(node => !mainEdges.some(edge => edge.to === node.id)).forEach(node => traverse(node.id));
   nodes.forEach(node => traverse(node.id));
   return {
-    version: 2, focus, title: diagramFocusTitle(focus),
+    version: 3, highLevel, layoutStyle: "graph", focus, title: diagramFocusTitle(focus),
     width: Math.max(compound ? 640 : 400, bounds.width ?? 0), height: Math.max(compound ? 280 : 220, (bounds.height ?? 0) + 22),
     groups: groups.map(group => ({ ...box(`group-${group.id}`), id: group.id, title: group.title, subtitle: group.subtitle, fill: group.fill })),
     nodes: nodes.map(node => ({
       ...box(node.id), node, annotation: annotations.has(node.id), labelLines: labels.get(node.id)!,
-      glyph: node.id === "mobile" ? "phone" : node.id === "web" ? "window" :
+      glyph: isAudience(node) ? "person" : node.id === "mobile" ? "phone" : node.id === "web" ? "window" :
         node.id === "custom-backend" ? "code" : node.layer === "interfaces" || node.id === "business-api" || node.id === "api-channel" ? "api" :
           node.layer === "preparation" ? "pipeline" : "service",
-      caption: annotations.has(node.id) ? node.required ? "Selected control dependency" : "Recommended control dependency" : node.state === "confirm" ? "Confirm before implementation" : !node.required ? "Optional capability" : node.state === "managed" ? "Microsoft-managed" :
+      caption: isAudience(node) ? "User / actor" : highLevel && node.provider
+        ? `${PROVIDER_NAMES[node.provider]} · ${node.state === "confirm" ? "confirm" : !node.required ? "optional" : node.state === "managed" ? "managed" : "proposed"}`
+        : annotations.has(node.id) ? node.required ? "Selected control dependency" : "Recommended control dependency" : node.state === "confirm" ? "Confirm before implementation" : !node.required ? "Optional capability" : node.state === "managed" ? "Microsoft-managed" :
         node.kind === "source" ? "Source permissions apply" : node.kind === "platform" ? "Hosting / governance platform" :
         node.kind === "capability" ? "Logical capability" : "Proposed component"
     })),
     connections: orderedEdges.map(({ edge, index }, displayIndex) => {
       const result = graph.edge({ v: edge.from, w: edge.to, name: `connection-${index}` });
-      if (!result.points || result.points.length < 2 || result.x === undefined || result.y === undefined) {
+      if (!result.points || result.points.length < 2 || result.x === undefined || result.y === undefined ||
+          result.width === undefined || result.height === undefined) {
         throw new Error(`Architecture layout could not route ${edge.from} to ${edge.to}.`);
       }
       return {
         id: `connection-${displayIndex + 1}`, number: displayIndex + 1, edge, points: result.points,
-        labelPoint: { x: result.x, y: result.y }, shortLabel: shortLabel(edge)
+        labelPoint: { x: result.x, y: result.y },
+        shortLabel: highLevel ? edge.label : shortLabel(edge),
+        labelLines: highLevel ? wrapDiagramLabel(edge.label, 24) : [String(displayIndex + 1)],
+        labelBox: { x: result.x - result.width / 2, y: result.y - result.height / 2, width: result.width, height: result.height }
       };
     })
   };
@@ -231,6 +266,7 @@ function createArchitectureLayout(view: ArchitectureView, focus: DiagramFocus, d
 
 export function buildArchitectureLayout(view: ArchitectureView, focus: DiagramFocus = "overview"): ArchitectureLayout {
   const horizontal = createArchitectureLayout(view, focus, "LR");
+  if (view.authority === "ai" && focus === "overview") return stackArchitecture(horizontal);
   if (focus === "overview") return horizontal;
   const vertical = createArchitectureLayout(view, focus, "TB");
   const fit = (graph: ArchitectureLayout) => Math.min(12.04 / graph.width, 4.18 / graph.height);

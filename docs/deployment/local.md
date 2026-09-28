@@ -15,13 +15,19 @@ npm run dev -- --hostname 127.0.0.1
 
 Open `http://127.0.0.1:3000`. `AUTH_MODE=none` is permitted only outside production
 and only for loopback requests. Do not use this mode to share the app on a
-network. The initial rules-based result works with AI disabled.
+network. With AI disabled the wizard still collects a profile, but the
+Recommendation page requires AI and does not show a deterministic substitute.
 
 ## Use existing models
 
 Before enabling AI, prepare an existing Foundry/Azure OpenAI resource endpoint
 and compatible chat deployments. These are **deployment names**; a catalog model
 name is not sufficient unless the deployment has the same name.
+The existing Sol architect deployment must support `xhigh` reasoning and strict
+`json_schema` structured outputs on Chat Completions v1. A reviewer is optional;
+if configured it must support strict structured outputs and its configured
+effort (default `medium`). The wizard uses low reasoning and JSON-object mode.
+Unsupported settings produce an explicit provider error, not a silent fallback.
 
 Keep this configuration in ignored `.env.local`, never in `.env.example`:
 
@@ -37,8 +43,8 @@ PATHFINDER_JUDGE_DEPLOYMENT=your-review-deployment
 PATHFINDER_JUDGE_REASONING_EFFORT=medium
 ```
 
-For example, existing deployments of Terra for the wizard and Sol for report
-composition/review can serve these roles. Configure actual deployment names;
+Existing deployments of Terra for the wizard and Sol for report composition
+serve these roles. The optional reviewer may share the Sol deployment. Configure actual deployment names;
 this project does not provision them. The endpoint must be the HTTPS model
 resource root, not a Foundry project URL.
 
@@ -105,10 +111,34 @@ finished; its certificate and generated password are for local QA only.
 
 ## Timeouts and authentication refresh
 
-The recommendation workflow has a bounded four-minute server budget, including
-composition, independent review, and one repair round. The browser allows a
-small response-delivery margin beyond that budget. Navigating away cancels the
-request rather than starting another workflow.
+Generation makes one Sol call at maximum supported reasoning (`xhigh`). One
+format-repair attempt is permitted if bounds or graph references are invalid.
+Each generation call has a five-minute limit; the complete generation budget
+is ten minutes including that possible repair, plus ten seconds for delivery.
+These are ceilings, not predicted durations. Optional review is a separate
+single-call operation with a 90-second limit and ten seconds of delivery grace.
+Navigating away cancels the active request.
+
+The original Recommendation layout stays in place. During initial generation a
+dimmed, non-interactive rules-based preview is explicitly marked preliminary.
+Generation and optional-review stages come from real server events; the elapsed
+timer is not a completion percentage. Review is never shown as running unless
+the user requested it. Motion can be
+paused and respects reduced-motion preferences. The page replaces the preview
+entirely with the accepted AI artifact; it never exports the preview.
+
+The AI owns the final recommendation and explicit diagram graph. A failed
+generation displays a reason and a retry action; no rules-based recommendation
+is presented as a successful result. An initial failure removes the preview.
+A failed refinement preserves the previous AI report. JSON-mode model
+requests include an explicit JSON instruction, including independent review.
+Optional review attaches approval or specific issues to the current report.
+It never rewrites or discards that report. **Apply review feedback** is a separate
+user action that generates a new, unreviewed revision. Provider failures during
+review preserve the existing architecture. Unreviewed results remain exportable
+and are never labelled review-approved.
+The native output schema and renderer share the supported layer names;
+security/governance components are valid diagram nodes.
 
 Password mode never calls the Entra refresh endpoint. If an existing Entra host
 is separately configured with a refresh-capable token store and permissions,

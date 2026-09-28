@@ -19,6 +19,7 @@
     "test:review": "tsx scripts/review-regression-check.ts",
     "test:ui": "tsx scripts/ui-regression-check.tsx",
     "test:api-authority": "node scripts/api-authority-regression-check.cjs",
+    "test:recommendation-progress": "tsx scripts/recommendation-progress-regression-check.ts",
     "test:runtime-api": "node scripts/runtime-api-regression-check.cjs",
     "test:ai-refinement": "tsx scripts/v7-ai-regression-check.ts",
     "test:outputs": "tsx scripts/output-regression-check.ts",

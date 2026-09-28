@@ -149,6 +149,10 @@ export function buildArchitectureSummary(
   decision: ArchitectureDecision,
   solutionType: string
 ) {
+  if (decision.authority === "ai") {
+    if (!decision.approvedSummary) throw new Error("The accepted AI recommendation is missing its architecture summary.");
+    return decision.approvedSummary;
+  }
   const users = labels(input.users, labelMaps.users, "the selected users");
   const channels = labels(input.channels, labelMaps.channels, "the selected channel");
   const dataSources = labels(input.dataSources, labelMaps.dataSources, "the selected data sources");

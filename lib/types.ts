@@ -244,6 +244,19 @@ export type DecisionInput = {
 
 /* ---------------- Decision output ---------------- */
 
+export type ServiceSizing = {
+  id: string;
+  name: string;
+  provider: "azure" | "microsoft-saas" | "external" | "logical";
+  purpose: string;
+  nodeIds: string[];
+  dev: string;
+  test: string;
+  prod: string;
+  assumptions: string[];
+  references: string[];
+};
+
 export type ArchitectureOverlay = {
   id: string;
   name: string;
@@ -278,12 +291,20 @@ export type ZeroTrustZone = {
 
 export type RecommendationAgentTraceItem = {
   agent: string;
-  status: "passed" | "warning" | "failed";
+  status: "passed" | "warning" | "failed" | "skipped";
   summary: string;
   details: string[];
 };
 
 export type ArchitectureDecision = {
+  authority?: "ai";
+  solutionType?: string;
+  confidenceReason?: string;
+  approvedArchitecture?: import("./architecture-view").ArchitectureView;
+  approvedSummary?: string;
+  serviceSizing?: ServiceSizing[];
+  sizingAssumptions?: string[];
+  highLevelFlow?: string[];
   basePatternId: string;
   basePatternName: string;
   overlays: ArchitectureOverlay[];
@@ -345,8 +366,17 @@ export type AdaptiveWizardState = {
 };
 
 export type TieBreakResponse = {
-  /** Set by the server only after structural checks and a separate AI judgment. */
+  /** True only when the optional independent AI review passes. */
   aiValidated?: boolean;
+  generation?: { model: string; reasoningEffort: import("./ai-runtime").ReasoningEffort };
+  review?: import("./recommendation-contract").RecommendationReview;
+  authority?: "ai";
+  contractVersion?: number;
+  confidence?: "high" | "medium" | "low";
+  confidenceReason?: string;
+  overlays?: ArchitectureOverlay[];
+  serviceSizing?: ServiceSizing[];
+  sizingAssumptions?: string[];
   recommendedBasePatternId: string;
   recommendedOverlays: string[];
   agentTrace?: RecommendationAgentTraceItem[];
@@ -359,6 +389,7 @@ export type TieBreakResponse = {
   optionalAddOns?: string[];
   architectureLayers?: ArchitectureLayer[];
   endToEndFlow?: string[];
+  highLevelFlow?: string[];
   rationale?: string[];
   securityControls?: string[];
   zeroTrust?: ZeroTrustZone;

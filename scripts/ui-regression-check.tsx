@@ -50,11 +50,18 @@ const recommendationMarkup = renderToStaticMarkup(
     onReset={() => {}}
   />
 );
-assert.doesNotMatch(recommendationMarkup, /Preparing recommendation|Waiting for LLM/);
+assert.match(recommendationMarkup, /Preparing your AI architecture/);
+assert.match(recommendationMarkup, /data-preliminary-preview="true"/);
+assert.match(recommendationMarkup, /recommendation-preview-dim/);
+assert.match(recommendationMarkup, /preliminary rules-based preview, not the final recommendation/);
+assert.match(recommendationMarkup, /data-recommendation-layout="classic"/);
+assert.match(recommendationMarkup, /xl:grid-cols-\[minmax\(0,1.25fr\)_minmax\(22rem,0.75fr\)\]/);
+assert.doesNotMatch(recommendationMarkup, /deterministic rules retain|AI-generated/);
+assert.ok(recommendationMarkup.includes(decide(input).finalRecommendation), "Only an explicitly dimmed preliminary preview is allowed while AI is running.");
 const exportButton = [...recommendationMarkup.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
   .find((match) => match[2].includes("Export as PowerPoint"));
-assert.ok(exportButton, "The baseline export must render before any optional AI request completes.");
-assert.doesNotMatch(exportButton[1], /\sdisabled(?:=|\s|$)/, "AI availability must not disable baseline export.");
+assert.ok(exportButton);
+assert.match(exportButton[1], /\sdisabled(?:=|\s|$)/, "An export must wait for an accepted AI artifact.");
 
 async function checkAvailability() {
   const originalFetch = globalThis.fetch;
@@ -74,7 +81,7 @@ async function checkAvailability() {
   } finally {
     globalThis.fetch = originalFetch;
   }
-  console.log("UI accessibility and baseline-first AI availability checks passed.");
+  console.log("UI accessibility, preserved layout and non-final preliminary-preview checks passed.");
 }
 
 checkAvailability().catch((error) => {

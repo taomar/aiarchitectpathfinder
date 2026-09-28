@@ -3,13 +3,18 @@ import { isActionable } from "./rules";
 
 export const ARCHITECTURE_DISCLAIMER = "Suggested architecture — requires review and validation before implementation.";
 
-export type ViewLayerId = "channels" | "edge" | "runtime" | "models" | "grounding" | "interfaces" | "data" | "preparation";
+export const VIEW_LAYER_IDS = [
+  "channels", "edge", "runtime", "models", "grounding", "interfaces", "data",
+  "preparation", "identity", "security", "operations", "network"
+] as const;
+export type ViewLayerId = typeof VIEW_LAYER_IDS[number];
 export type ViewState = "selected" | "managed" | "confirm";
 export type ViewNode = {
   id: string;
   label: string;
   detail: string;
   layer: ViewLayerId;
+  provider?: "azure" | "microsoft-saas" | "external" | "logical";
   kind: "component" | "platform" | "capability" | "source";
   state: ViewState;
   required: boolean;
@@ -21,11 +26,12 @@ export type ViewEdge = {
   from: string;
   to: string;
   label: string;
-  kind: "request" | "query" | "preparation" | "contains" | "conditional";
+  kind: "request" | "query" | "preparation" | "contains" | "conditional" | "policy";
 };
 export type ViewControl = { label: string; scope: string; required: boolean };
 export type ArchitectureView = {
   version: 1;
+  authority?: "ai";
   title: string;
   disclaimer: string;
   audience: string[];
@@ -42,7 +48,7 @@ export type ArchitectureView = {
   decisions: string[];
 };
 
-const LAYERS: Array<{ id: ViewLayerId; title: string; description: string }> = [
+export const ARCHITECTURE_VIEW_LAYERS: Array<{ id: ViewLayerId; title: string; description: string }> = [
   { id: "channels", title: "Channels", description: "Where the user starts" },
   { id: "edge", title: "Edge & API policies", description: "The approved entry boundary" },
   { id: "runtime", title: "Experience & runtime", description: "Who owns the interaction and execution" },
@@ -50,7 +56,11 @@ const LAYERS: Array<{ id: ViewLayerId; title: string; description: string }> = [
   { id: "grounding", title: "Grounding & retrieval", description: "How authorized context is obtained" },
   { id: "interfaces", title: "Governed interfaces", description: "Controlled access to operational systems" },
   { id: "data", title: "Source systems", description: "Authoritative data and source permissions" },
-  { id: "preparation", title: "Background preparation", description: "Separate from the interactive request" }
+  { id: "preparation", title: "Background preparation", description: "Separate from the interactive request" },
+  { id: "identity", title: "Identity & access", description: "AI-selected authentication and authorization dependencies" },
+  { id: "security", title: "Security & governance", description: "AI-selected safeguards and policy dependencies" },
+  { id: "operations", title: "Operations", description: "AI-selected telemetry and lifecycle dependencies" },
+  { id: "network", title: "Network boundaries", description: "Network components explicitly included by the AI" }
 ];
 
 const audienceNames: Record<string, string> = {
@@ -112,7 +122,7 @@ const DEFINITIONS: Definition[] = [
   { id: "logic-apps", label: "Logic Apps", layer: "runtime", match: /logic apps/i, icon: icon("azure", "logic-apps") },
   { id: "power-automate", label: "Power Automate", layer: "runtime", match: /power automate/i, icon: icon("power-platform", "power-automate") },
   { id: "app-service", label: "App Service", layer: "runtime", match: /app service/i, icon: icon("azure", "app-services") },
-  { id: "container-apps", label: "Container Apps", layer: "runtime", match: /container apps/i, icon: icon("azure", "container-instances") },
+  { id: "container-apps", label: "Container Apps", layer: "runtime", match: /container apps/i, icon: icon("azure", "container-apps") },
   { id: "aks", label: "AKS", layer: "runtime", match: /\baks\b|kubernetes/i, icon: icon("azure", "aks") }
 ];
 
@@ -125,6 +135,12 @@ function stableId(layer: string, value: string) {
 }
 
 export function buildArchitectureView(decision: ArchitectureDecision, input?: DecisionInput): ArchitectureView {
+  if (decision.authority === "ai") {
+    if (!decision.approvedArchitecture || decision.approvedArchitecture.authority !== "ai") {
+      throw new Error("An AI recommendation must include its approved architecture graph.");
+    }
+    return decision.approvedArchitecture;
+  }
   const nodes = new Map<string, ViewNode>();
   const controls: ArchitectureView["controls"] = { identity: [], security: [], readiness: [], operations: [], network: [] };
   const decisions: string[] = [];
@@ -317,7 +333,7 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
     version: 1, title: decision.basePatternName, disclaimer: ARCHITECTURE_DISCLAIMER,
     audience: unique(audience).sort(),
     actionBoundary: input ? isActionable(input) ? "Business actions only through approved interfaces" : "Read-only business interaction" : "Follow the confirmed action permissions",
-    layers: LAYERS.map(layer => ({
+    layers: ARCHITECTURE_VIEW_LAYERS.map(layer => ({
       ...layer, nodes: [...nodes.values()].filter(node => node.layer === layer.id)
         .sort((left, right) => nodeOrder(left) - nodeOrder(right) || left.label.localeCompare(right.label))
     })),
@@ -326,8 +342,20 @@ export function buildArchitectureView(decision: ArchitectureDecision, input?: De
   };
 }
 
+const mermaidLabel = (value: string) => value.replace(/["<>[\]{}|\r\n]/g, " ").trim();
+
+export function architectureFlowMermaid(steps: string[]): string {
+  const lines = ["flowchart LR"];
+  steps.forEach((step, index) => {
+    lines.push(`  f${index}["${index + 1}. ${mermaidLabel(step)}"]`);
+    if (index) lines.push(`  f${index - 1} --> f${index}`);
+  });
+  lines.push("  classDef default fill:#EFF6FC,stroke:#0F6CBD,color:#17344F;");
+  return lines.join("\n");
+}
+
 export function architectureViewMermaid(view: ArchitectureView): string {
-  const escape = (value: string) => value.replace(/["<>[\]{}|\r\n]/g, " ").trim();
+  const escape = mermaidLabel;
   const nodes = view.layers.flatMap(layer => layer.nodes);
   const id = (value: string) => `n${nodes.findIndex(node => node.id === value)}`;
   const lines = ["flowchart LR"];
@@ -345,7 +373,7 @@ export function architectureViewMermaid(view: ArchitectureView): string {
       ? `  ${id(edge.from)} -. "${escape(edge.label)}" .-> ${id(edge.to)}`
       : `  ${id(edge.from)} -->|"${escape(edge.label)}"| ${id(edge.to)}`);
   }
-  nodes.filter(node => node.controls.length).forEach(node => {
+  nodes.filter(node => view.authority !== "ai" && node.controls.length).forEach(node => {
     const controlId = `c${nodes.indexOf(node)}`;
     lines.push(`  ${controlId}["${escape(node.controls.join("; "))}"]`);
     lines.push(`  ${controlId} -. "source boundary" .-> ${id(node.id)}`);

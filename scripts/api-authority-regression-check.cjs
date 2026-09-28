@@ -7,17 +7,22 @@ const ts = require("typescript");
 const { decide } = require("../lib/decision-engine.ts");
 const { prepareDecisionInputForRecommendation } = require("../lib/summary-intake.ts");
 const { emptyInput } = require("../lib/types.ts");
+const contract = require("../lib/recommendation-contract.ts");
+const { z } = require("zod");
 
 globalThis.fetch = async () => { throw new Error("Network calls are forbidden in API authority checks."); };
 let captured;
 const responses = {
   "@/lib/app-auth": { requireAppAccess: () => null },
+  "@/lib/recommendation-contract": contract,
+  "@/lib/ai-runtime": { AiProviderError: class extends Error {}, AiRoleConfigurationError: class extends Error {} },
+  "zod": { z },
   "@/lib/azure-openai": {
     azureOpenAIEnabled: () => true,
     azureOpenAIStatus: () => ({ enabled: true }),
     tieBreak: async (input, decision, notes, options) => {
       captured = { input, decision, notes, options };
-      return { recommendedBasePatternId: decision.basePatternId };
+      return { authority: "ai", recommendedBasePatternId: "ai-changed-route", recommendedStack: ["AI-selected-service"] };
     }
   },
   "@/lib/decision-engine": { decide },
@@ -53,11 +58,11 @@ async function verify(input) {
     })
   }));
   assert.equal(response.status, 200);
-  assert.deepEqual(captured.input, expectedInput, "Provider input must be the prepared profile.");
-  assert.deepEqual(captured.decision, expectedDecision, "Provider policy must be recomputed server-side, never supplied by the client.");
+  assert.deepEqual(captured.input, input, "The original collected use case must reach AI unchanged.");
+  assert.deepEqual(captured.decision, expectedDecision, "Recompute only the advisory draft; do not accept a forged client draft.");
   assert.equal(captured.notes, "Preserve approved read-only access.");
   assert.equal(captured.options.recommendationMode, "deep");
-  assert.equal((await response.json()).recommendedBasePatternId, expectedDecision.basePatternId);
+  assert.equal((await response.json()).recommendedBasePatternId, "ai-changed-route", "The API must not restore the deterministic route after the AI returns.");
 }
 
 async function main() {

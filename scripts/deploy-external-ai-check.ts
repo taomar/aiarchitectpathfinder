@@ -36,6 +36,8 @@ async function main() {
   };
   globalThis.fetch = async (input, init) => {
     assert.equal(String(input), `${endpoint}/openai/v1/chat/completions`);
+    const requestBody = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
+    assert.match(requestBody.messages[0].content, /JSON object/, "The JSON-mode transport must supply the provider-required JSON instruction.");
     const headers = new Headers(init?.headers);
     if (process.env.PATHFINDER_FOUNDRY_AUTH === "managedIdentity") {
       assert.equal(headers.get("authorization"), "Bearer synthetic-workload-token");
